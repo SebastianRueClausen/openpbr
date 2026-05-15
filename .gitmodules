@@ -1,0 +1,3 @@
+[submodule "openpbr-bsdf"]
+	path = openpbr-oracle/openpbr-bsdf
+	url = https://github.com/adobe/openpbr-bsdf.git
