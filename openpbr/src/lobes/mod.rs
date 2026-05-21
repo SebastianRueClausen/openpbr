@@ -1,7 +1,15 @@
+use crate::{
+    consts::{DENSITY_EPSILON, RADIANCE_EPSILON},
+    math::SphericalCoordinates,
+};
 use glam::Vec3;
 
+pub mod coat;
 pub mod diffuse;
-pub mod specular;
+pub mod fuzz;
+pub mod metal;
+pub mod specular_reflection;
+pub mod specular_transmission;
 
 #[derive(Default, Clone, Copy)]
 pub struct Throughput {
@@ -28,6 +36,10 @@ impl Throughput {
             specular,
         }
     }
+
+    pub fn total(&self) -> Vec3 {
+        self.diffuse + self.specular
+    }
 }
 
 #[derive(Default, Clone, Copy)]
@@ -49,4 +61,24 @@ pub trait Lobe {
     fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput;
     fn sample(&self, random: Vec3, wi: Vec3) -> Sample;
     fn density(&self, wi: Vec3, wo: Vec3) -> f32;
+    fn incidence_is_valid(&self, wi: Vec3) -> bool;
+
+    fn estimate_directional_albedo(&self, wi: Vec3, samples: &[Vec3]) -> Vec3 {
+        if !self.incidence_is_valid(wi) {
+            return Vec3::ZERO;
+        }
+
+        let mut albedo = Vec3::ZERO;
+
+        for random in samples {
+            let sample = self.sample(*random, wi);
+
+            if sample.throughput.total().length() > RADIANCE_EPSILON {
+                albedo += sample.throughput.total() * sample.wo.cos_theta().abs()
+                    / sample.density.max(DENSITY_EPSILON);
+            }
+        }
+
+        return albedo / samples.len() as f32;
+    }
 }

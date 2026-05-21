@@ -15,10 +15,6 @@ impl Microfacet {
         }
     }
 
-    pub fn is_mirror(&self) -> bool {
-        self.alpha.x <= 1e-3 && self.alpha.y <= 1e-3
-    }
-
     pub fn distribution(&self, microfacet_normal: Vec3) -> f32 {
         let tan_squared = microfacet_normal.tan_theta_squared();
         if tan_squared.is_infinite() {
@@ -34,24 +30,25 @@ impl Microfacet {
         1.0 / denum
     }
 
-    pub fn lambda(&self, view: Vec3) -> f32 {
-        let tan_theta_squared = view.tan_theta_squared();
+    pub fn lambda(&self, wi: Vec3) -> f32 {
+        let tan_theta_squared = wi.tan_theta_squared();
         if tan_theta_squared.is_infinite() {
             return 0.0;
         }
         let alpha_squared =
-            (view.cos_phi() * self.alpha.x).powi(2) + (view.sin_phi() * self.alpha.y).powi(2);
+            (wi.cos_phi() * self.alpha.x).powi(2) + (wi.sin_phi() * self.alpha.y).powi(2);
         ((1.0 + alpha_squared * tan_theta_squared).sqrt() - 1.0) / 2.0
     }
 
-    pub fn visibility(&self, incident: Vec3, outgoing: Vec3) -> f32 {
-        1.0 / (1.0 + self.lambda(outgoing) + self.lambda(incident))
+    pub fn visibility(&self, wi: Vec3, wo: Vec3) -> f32 {
+        1.0 / (1.0 + self.lambda(wo) + self.lambda(wi))
     }
 
-    pub fn masking(&self, view: Vec3) -> f32 {
-        1.0 / (1.0 + self.lambda(view))
+    pub fn masking(&self, wi: Vec3) -> f32 {
+        1.0 / (1.0 + self.lambda(wi))
     }
 
+    #[allow(dead_code)]
     pub fn density(&self, view: Vec3, microfacet_normal: Vec3) -> f32 {
         self.masking(view)
             * view.dot(microfacet_normal).abs()
@@ -59,9 +56,9 @@ impl Microfacet {
             / view.cos_theta().abs()
     }
 
-    pub fn sample(&self, view: Vec3, random: Vec2) -> Vec3 {
+    pub fn sample(&self, wi: Vec3, random: Vec2) -> Vec3 {
         let mut view_hemisphere =
-            Vec3::new(view.x * self.alpha.x, view.y * self.alpha.y, view.z).normalize();
+            Vec3::new(wi.x * self.alpha.x, wi.y * self.alpha.y, wi.z).normalize();
         if view_hemisphere.cos_theta() < 0.0 {
             view_hemisphere = -view_hemisphere;
         }
@@ -82,16 +79,6 @@ impl Microfacet {
         let z = (1.0 - p.length_squared()).max(0.0).sqrt();
         let normal = basis.transform(p.extend(z)) * self.alpha.extend(1.0);
         normal.with_z(normal.z.max(1e-6)).normalize()
-    }
-
-    pub fn sample_unidirectional(&self, random: Vec2) -> Vec3 {
-        let phi = 2.0 * PI * random.x;
-        let cos_theta =
-            ((1.0 - random.y) / (1.0 + (self.alpha.element_product() - 1.0) * random.y)).sqrt();
-        let sin_theta = (1.0 - cos_theta.powi(2)).sqrt();
-        (Vec3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta)
-            * self.alpha.extend(1.0))
-        .normalize()
     }
 }
 

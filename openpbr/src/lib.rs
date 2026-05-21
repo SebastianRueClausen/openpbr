@@ -1,6 +1,6 @@
-pub mod lobes;
-mod dispersion;
+mod consts;
 mod fresnel;
-mod math;
+pub mod lobes;
+pub mod math;
 mod microfacet;
 mod sampling;

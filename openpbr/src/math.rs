@@ -1,5 +1,35 @@
 use glam::Vec3;
 
+/// A rotation around the Z axis in the local shading frame.
+pub struct LocalRotation {
+    cos: f32,
+    sin: f32,
+}
+
+impl LocalRotation {
+    pub fn new(angle: f32) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        Self { cos, sin }
+    }
+
+    pub fn rotate(&self, v: Vec3) -> Vec3 {
+        Vec3::new(
+            v.x * self.cos - v.y * self.sin,
+            v.x * self.sin + v.y * self.cos,
+            v.z,
+        )
+    }
+
+    pub fn inverse_rotate(&self, v: Vec3) -> Vec3 {
+        Vec3::new(
+            v.x * self.cos + v.y * self.sin,
+            -v.x * self.sin + v.y * self.cos,
+            v.z,
+        )
+    }
+}
+
+// An orthonormal basis.
 #[derive(Debug)]
 pub struct SurfaceBasis {
     pub normal: Vec3,

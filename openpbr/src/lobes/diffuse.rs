@@ -1,4 +1,5 @@
 use crate::{
+    consts::DENOM_TOLERANCE,
     math::SphericalCoordinates,
     sampling::{cosine_hemisphere_density, cosine_hemisphere_sample},
 };
@@ -43,8 +44,12 @@ pub struct Diffuse {
 }
 
 impl Lobe for Diffuse {
+    fn incidence_is_valid(&self, wi: Vec3) -> bool {
+        wi.cos_theta() >= DENOM_TOLERANCE
+    }
+
     fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput {
-        if wi.cos_theta() < 1e-10 || wo.cos_theta() < 1e-10 {
+        if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
             return Throughput::ZERO;
         }
         Throughput::from_diffuse(energy_compensated_oren_nayar(
@@ -56,12 +61,14 @@ impl Lobe for Diffuse {
     }
 
     fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
-        if wi.cos_theta() < 1e-10 {
+        if !self.incidence_is_valid(wi) {
             return Sample::ZERO;
         }
+
         let wo = cosine_hemisphere_sample(random.truncate());
         let throughput = self.eval(wi, wo);
         let density = self.density(wi, wo);
+
         Sample {
             wo,
             throughput,
@@ -70,9 +77,18 @@ impl Lobe for Diffuse {
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {
-        if wi.cos_theta() < 1e-10 {
+        if !self.incidence_is_valid(wi) {
             return 0.0;
         }
+
         cosine_hemisphere_density(wo.cos_theta())
+    }
+
+    fn estimate_directional_albedo(&self, wi: Vec3, _: &[Vec3]) -> Vec3 {
+        if !self.incidence_is_valid(wi) {
+            return Vec3::ZERO;
+        }
+
+        self.color * self.weight
     }
 }
