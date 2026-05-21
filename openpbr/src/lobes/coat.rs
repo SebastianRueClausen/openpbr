@@ -56,19 +56,19 @@ impl Lobe for Coat {
         if !wi.in_same_hemisphere(&wo) {
             return Throughput::ZERO;
         }
-        let ior = if wi.cos_theta() > 0.0 {
-            self.ior
-        } else {
-            1.0 / self.ior
-        };
+
+        let ior = self.ior(wi.cos_theta());
         if (ior - 1.0).abs() < IOR_EPSILON {
             return Throughput::ZERO;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+
         let (brdf, _) = brdf_and_density(&microfacet, wi_rotated, wo_rotated, wi, wo, ior);
+
         Throughput::from_specular(brdf)
     }
 
@@ -104,7 +104,9 @@ impl Lobe for Coat {
         if !wi.in_same_hemisphere(&wo) || !self.incidence_is_valid(wi) {
             return 0.0;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);

@@ -70,11 +70,14 @@ impl Lobe for Metal {
             return Throughput::ZERO;
         }
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+
         let microfacet_normal = (wi_rotated + wo_rotated).normalize();
         let (f0, tint) = self.f0_tint();
+
         let (brdf, _) = brdf_and_density(
             &microfacet,
             microfacet_normal,
@@ -85,6 +88,7 @@ impl Lobe for Metal {
             f0,
             tint,
         );
+
         Throughput::from_specular(brdf)
     }
 
@@ -92,16 +96,21 @@ impl Lobe for Metal {
         if wi.cos_theta() < DENOM_TOLERANCE {
             return Sample::ZERO;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let microfacet_normal = microfacet.sample(wi_rotated, random.truncate());
         let wo_rotated = -wi_rotated.reflect(microfacet_normal);
+
         if !wi_rotated.in_same_hemisphere(&wo_rotated) {
             return Sample::ZERO;
         }
+
         let wo = rotation.inverse_rotate(wo_rotated);
         let (f0, tint) = self.f0_tint();
+
         let (brdf, density) = brdf_and_density(
             &microfacet,
             microfacet_normal,
@@ -112,6 +121,7 @@ impl Lobe for Metal {
             f0,
             tint,
         );
+
         Sample {
             wo,
             throughput: Throughput::from_specular(brdf),
@@ -123,10 +133,13 @@ impl Lobe for Metal {
         if wi.cos_theta() < DENOM_TOLERANCE || wo.cos_theta() < DENOM_TOLERANCE {
             return DENSITY_EPSILON;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+
         let microfacet_normal = (wi_rotated + wo_rotated).normalize();
         let (f0, tint) = self.f0_tint();
         let (_, density) = brdf_and_density(
@@ -139,6 +152,7 @@ impl Lobe for Metal {
             f0,
             tint,
         );
+
         density
     }
 }

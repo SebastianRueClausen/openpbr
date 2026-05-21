@@ -58,12 +58,16 @@ impl Lobe for Fuzz {
         if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
             return Throughput::ZERO;
         }
+
         let roughness = self.roughness.clamp(0.01, 1.0);
+
         let basis = orthonormal_basis_ltc(wi);
         let w = basis.transpose() * wo;
         let (a_inv, b) = ltc_inverse_coeffs(wi.cos_theta(), roughness);
+
         let direction = Vec3::new(a_inv * w.x + b * w.z, a_inv * w.y, w.z);
         let (brdf, _) = brdf_and_density(self.color, direction, wi, a_inv, roughness);
+
         Throughput::from_diffuse(brdf)
     }
 
@@ -71,17 +75,22 @@ impl Lobe for Fuzz {
         if !self.incidence_is_valid(wi) {
             return Sample::ZERO;
         }
+
         let roughness = self.roughness.clamp(0.01, 1.0);
+
         let direction = cosine_hemisphere_sample(random.truncate());
         let (a_inv, b) = ltc_inverse_coeffs(wi.cos_theta(), roughness);
+
         let w = Vec3::new(
             direction.x / a_inv - direction.z * b / a_inv,
             direction.y / a_inv,
             direction.z,
         );
+
         let basis = orthonormal_basis_ltc(wi);
         let wo = basis * w.normalize();
         let (brdf, density) = brdf_and_density(self.color, direction, wi, a_inv, roughness);
+
         Sample {
             wo,
             throughput: Throughput::from_diffuse(brdf),
@@ -93,12 +102,15 @@ impl Lobe for Fuzz {
         if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
             return 0.0;
         }
+
         let roughness = self.roughness.clamp(0.01, 1.0);
-        let basis = orthonormal_basis_ltc(wi);
-        let w = basis.transpose() * wo;
+
+        let w = orthonormal_basis_ltc(wi).transpose() * wo;
+
         let (a_inv, b) = ltc_inverse_coeffs(wi.cos_theta(), roughness);
         let direction = Vec3::new(a_inv * w.x + b * w.z, a_inv * w.y, w.z);
         let (_, density) = brdf_and_density(self.color, direction, wi, a_inv, roughness);
+
         density
     }
 

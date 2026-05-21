@@ -13,12 +13,16 @@ use super::{Lobe, Sample, Throughput};
 /// `ior` is n_i/n_t (incident over transmitted index of refraction).
 fn refraction_direction(normal: Vec3, ior: f32, wi: Vec3) -> Option<Vec3> {
     let cos_theta_in = wi.dot(normal);
+
     let sin_theta_in_sq = (1.0 - cos_theta_in * cos_theta_in).max(0.0);
     let sin_theta_tr_sq = ior * ior * sin_theta_in_sq;
+
     if sin_theta_tr_sq >= 1.0 {
         return None;
     }
+
     let cos_theta_tr = (1.0 - sin_theta_tr_sq).sqrt();
+
     Some(ior * (-wi) + (ior * cos_theta_in - cos_theta_tr) * normal)
 }
 
@@ -100,6 +104,7 @@ impl Lobe for SpecularTransmission {
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+
         let microfacet_normal_raw = -wo_rotated - ior * wi_rotated;
         if microfacet_normal_raw.length_squared() == 0.0 {
             return Throughput::ZERO;
@@ -148,6 +153,7 @@ impl Lobe for SpecularTransmission {
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
+
         let microfacet_normal = if wi_rotated.cos_theta() > 0.0 {
             microfacet.sample(wi_rotated, random.truncate())
         } else {
@@ -228,6 +234,7 @@ impl Lobe for SpecularTransmission {
             self.transmission_color,
             self.transmission_depth,
         );
+
         density
     }
 }

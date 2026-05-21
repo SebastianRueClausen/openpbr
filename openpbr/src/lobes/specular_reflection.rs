@@ -88,9 +88,9 @@ impl SpecularReflection {
         )
     }
 
-    fn ior(&self, wi: Vec3) -> f32 {
+    fn ior(&self, cos_theta: f32) -> f32 {
         let ior_ratio = self.ior_ratio();
-        if wi.cos_theta() > 0.0 {
+        if cos_theta > 0.0 {
             ior_ratio
         } else {
             1.0 / ior_ratio
@@ -100,27 +100,32 @@ impl SpecularReflection {
 
 impl Lobe for SpecularReflection {
     fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        (self.ior(wi) - 1.0).abs() >= IOR_EPSILON
+        (self.ior(wi.cos_theta()) - 1.0).abs() >= IOR_EPSILON
     }
 
     fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput {
         if !wi.in_same_hemisphere(&wo) {
             return Throughput::ZERO;
         }
-        let ior = self.ior(wi);
+
+        let ior = self.ior(wi.cos_theta());
         if (ior - 1.0).abs() < IOR_EPSILON {
             return Throughput::ZERO;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+
         let microfacet_normal = (wi_rotated + wo_rotated).normalize();
         if wi_rotated.dot(microfacet_normal) * wi_rotated.cos_theta() < 0.0
             || wo_rotated.dot(microfacet_normal) * wo_rotated.cos_theta() < 0.0
         {
             return Throughput::ZERO;
         }
+
         let (brdf, _) = brdf_and_density(
             &microfacet,
             wi_rotated,
@@ -134,17 +139,21 @@ impl Lobe for SpecularReflection {
             self.coat_weight,
             self.specular_color,
         );
+
         Throughput::from_specular(brdf)
     }
 
     fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
-        let ior = self.ior(wi);
+        let ior = self.ior(wi.cos_theta());
         if (ior - 1.0).abs() < IOR_EPSILON {
             return Sample::ZERO;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
+
         let microfacet_normal = if wi_rotated.cos_theta() > 0.0 {
             microfacet.sample(wi_rotated, random.truncate())
         } else {
@@ -153,11 +162,14 @@ impl Lobe for SpecularReflection {
             n.z = -n.z;
             n
         };
+
         let wo_rotated = -wi_rotated.reflect(microfacet_normal);
         if !wi_rotated.in_same_hemisphere(&wo_rotated) {
             return Sample::ZERO;
         }
+
         let wo = rotation.inverse_rotate(wo_rotated);
+
         let (brdf, density) = brdf_and_density(
             &microfacet,
             wi_rotated,
@@ -171,6 +183,7 @@ impl Lobe for SpecularReflection {
             self.coat_weight,
             self.specular_color,
         );
+
         Sample {
             wo,
             throughput: Throughput::from_specular(brdf),
@@ -182,11 +195,14 @@ impl Lobe for SpecularReflection {
         if !wi.in_same_hemisphere(&wo) {
             return 0.0;
         }
-        let ior = self.ior_ratio();
+
+        let ior = self.ior(wi.cos_theta());
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
+
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+
         let microfacet_normal = (wi_rotated + wo_rotated).normalize();
         let (_, density) = brdf_and_density(
             &microfacet,
@@ -201,6 +217,7 @@ impl Lobe for SpecularReflection {
             self.coat_weight,
             self.specular_color,
         );
+
         density
     }
 }

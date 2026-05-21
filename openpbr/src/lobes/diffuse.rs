@@ -52,6 +52,7 @@ impl Lobe for Diffuse {
         if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
             return Throughput::ZERO;
         }
+
         Throughput::from_diffuse(energy_compensated_oren_nayar(
             self.weight * self.color,
             PI / 2.0 * self.roughness,
