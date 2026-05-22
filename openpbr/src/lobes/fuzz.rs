@@ -1,5 +1,8 @@
 use crate::{
-    consts::DENOM_TOLERANCE, math::SphericalCoordinates, sampling::cosine_hemisphere_sample,
+    consts::DENOM_TOLERANCE,
+    material::Material,
+    math::SphericalCoordinates,
+    sampling::cosine_hemisphere_sample,
 };
 use glam::{Mat3, Vec3};
 use std::f32::consts::PI;
@@ -47,6 +50,15 @@ fn brdf_and_density(
 pub struct Fuzz {
     pub color: Vec3,
     pub roughness: f32,
+}
+
+impl From<&Material> for Fuzz {
+    fn from(m: &Material) -> Self {
+        Self {
+            color: m.fuzz_color,
+            roughness: m.fuzz_roughness,
+        }
+    }
 }
 
 impl Lobe for Fuzz {

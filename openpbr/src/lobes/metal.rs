@@ -1,6 +1,7 @@
 use crate::{
     consts::{DENOM_TOLERANCE, DENSITY_EPSILON},
     fresnel::schlick,
+    material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::Microfacet,
 };
@@ -50,6 +51,20 @@ pub struct Metal {
     pub roughness: f32,
     pub roughness_anisotropy: f32,
     pub rotation: f32,
+}
+
+impl From<&Material> for Metal {
+    fn from(m: &Material) -> Self {
+        Self {
+            base_weight: m.base_weight,
+            base_color: m.base_color,
+            specular_weight: m.specular_weight,
+            specular_color: m.specular_color,
+            roughness: m.specular_roughness,
+            roughness_anisotropy: m.specular_roughness_anisotropy,
+            rotation: m.specular_rotation,
+        }
+    }
 }
 
 impl Metal {

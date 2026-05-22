@@ -4,6 +4,7 @@ use crate::{
 };
 use glam::Vec3;
 
+pub mod bsdf;
 pub mod coat;
 pub mod diffuse;
 pub mod fuzz;
@@ -21,6 +22,11 @@ impl Throughput {
     pub const ZERO: Self = Self {
         diffuse: Vec3::ZERO,
         specular: Vec3::ZERO,
+    };
+
+    pub const ONE: Self = Self {
+        diffuse: Vec3::ONE,
+        specular: Vec3::ONE,
     };
 
     pub fn from_diffuse(diffuse: Vec3) -> Self {
@@ -81,4 +87,14 @@ pub trait Lobe {
 
         return albedo / samples.len() as f32;
     }
+}
+
+#[derive(enum_map::Enum, Clone, Copy, PartialEq, Eq)]
+pub enum LobeType {
+    Fuzz = 0,
+    Coat = 1,
+    Metal = 2,
+    SpecularReflection = 3,
+    SpecularTransmission = 4,
+    Diffuse = 5,
 }

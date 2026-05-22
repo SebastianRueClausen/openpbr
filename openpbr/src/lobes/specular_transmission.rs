@@ -1,6 +1,7 @@
 use crate::{
     consts::{DENOM_TOLERANCE, DENSITY_EPSILON, IOR_EPSILON},
     fresnel::fresnel_dielectric,
+    material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::Microfacet,
 };
@@ -71,6 +72,19 @@ pub struct SpecularTransmission {
     pub roughness: f32,
     pub roughness_anisotropy: f32,
     pub rotation: f32,
+}
+
+impl From<&Material> for SpecularTransmission {
+    fn from(m: &Material) -> Self {
+        Self {
+            specular_ior: m.specular_ior,
+            transmission_color: m.transmission_color,
+            transmission_depth: m.transmission_depth,
+            roughness: m.specular_roughness,
+            roughness_anisotropy: m.specular_roughness_anisotropy,
+            rotation: m.specular_rotation,
+        }
+    }
 }
 
 impl SpecularTransmission {

@@ -1,6 +1,7 @@
 use crate::{
     consts::{DENOM_TOLERANCE, IOR_EPSILON},
     fresnel::fresnel_dielectric,
+    material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::Microfacet,
 };
@@ -35,6 +36,17 @@ pub struct Coat {
     pub roughness: f32,
     pub roughness_anisotropy: f32,
     pub rotation: f32,
+}
+
+impl From<&Material> for Coat {
+    fn from(m: &Material) -> Self {
+        Self {
+            ior: m.coat_ior,
+            roughness: m.coat_roughness,
+            roughness_anisotropy: m.coat_roughness_anisotropy,
+            rotation: m.coat_rotation,
+        }
+    }
 }
 
 impl Coat {

@@ -1,5 +1,6 @@
 use crate::{
     consts::DENOM_TOLERANCE,
+    material::Material,
     math::SphericalCoordinates,
     sampling::{cosine_hemisphere_density, cosine_hemisphere_sample},
 };
@@ -41,6 +42,16 @@ pub struct Diffuse {
     pub weight: f32,
     pub color: Vec3,
     pub roughness: f32,
+}
+
+impl From<&Material> for Diffuse {
+    fn from(m: &Material) -> Self {
+        Self {
+            weight: m.base_weight,
+            color: m.base_color,
+            roughness: m.base_roughness,
+        }
+    }
 }
 
 impl Lobe for Diffuse {

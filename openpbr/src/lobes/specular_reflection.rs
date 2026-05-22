@@ -1,6 +1,7 @@
 use crate::{
     consts::{DENOM_TOLERANCE, IOR_EPSILON},
     fresnel::{f0_from_ior, fresnel_dielectric},
+    material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::Microfacet,
 };
@@ -76,6 +77,21 @@ pub struct SpecularReflection {
     pub roughness: f32,
     pub roughness_anisotropy: f32,
     pub rotation: f32,
+}
+
+impl From<&Material> for SpecularReflection {
+    fn from(m: &Material) -> Self {
+        Self {
+            specular_ior: m.specular_ior,
+            specular_weight: m.specular_weight,
+            specular_color: m.specular_color,
+            coat_ior: m.coat_ior,
+            coat_weight: m.coat_weight,
+            roughness: m.specular_roughness,
+            roughness_anisotropy: m.specular_roughness_anisotropy,
+            rotation: m.specular_rotation,
+        }
+    }
 }
 
 impl SpecularReflection {
