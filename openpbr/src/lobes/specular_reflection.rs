@@ -10,13 +10,20 @@ use std::f32::consts::PI;
 
 use super::{Lobe, Sample, Throughput};
 
-/// Computes the effective specular IOR accounting for the coat layer. OpenPBR Eq. (60).
+/// Computes the effective specular IOR as seen from outside the coat layer. OpenPBR Eq. (60).
+///
+/// The coat sits above the specular interface, so light refracts through it before reaching
+/// the specular layer. This makes the specular surface appear less refractive from the outside.
 fn specular_ior(specular_ior: f32, coat_ior: f32, coat_weight: f32) -> f32 {
     specular_ior / (1.0 + coat_weight * (coat_ior - 1.0))
 }
 
-/// Computes the IOR ratio that yields the correct Fresnel response given the
-/// specular weight. OpenPBR Eq. (26).
+/// Converts specular weight to an IOR ratio that produces the correct Fresnel at normal
+/// incidence. OpenPBR Eq. (26).
+///
+/// In other words, since `specular_weight` is an artistic property as opposed to a physical
+/// property, this finds the IOR ratio that would produce the reflectance corresponding to
+/// `specular_weight`.
 fn specular_ior_ratio(s_ior: f32, coat_ior: f32, coat_weight: f32, specular_weight: f32) -> f32 {
     let ior = specular_ior(s_ior, coat_ior, coat_weight);
     let f0 = f0_from_ior(ior);
@@ -25,17 +32,14 @@ fn specular_ior_ratio(s_ior: f32, coat_ior: f32, coat_weight: f32, specular_weig
     (1.0 + epsilon) / (1.0 - epsilon).max(DENOM_TOLERANCE)
 }
 
-/// Fresnel reflectance accounting for the coat layer refraction. OpenPBR Eq. (75).
-fn specular_fresnel_with_coat(
-    s_ior: f32,
-    coat_ior: f32,
-    coat_weight: f32,
-    cos_theta: f32,
-    ior: f32,
-) -> Vec3 {
-    let coat_refract_angle = (1.0 - (1.0 - cos_theta * cos_theta) / (coat_ior * coat_ior)).sqrt();
-    let ior_mix = s_ior + coat_weight * (ior - s_ior);
-    Vec3::splat(fresnel_dielectric(ior_mix, coat_refract_angle))
+/// Evaluates the Fresnel reflectance at the specular interface accounting for the outer medium
+/// above it. OpenPBR Eq. (75).
+///
+/// In particular, the outer medium refracts the ray before it hits the specular surface
+/// (Snell's law), so the effective angle of incidence is shallower than the geometric angle.
+fn specular_fresnel(outer_ior: f32, fresnel_ior: f32, cos_theta: f32) -> Vec3 {
+    let refracted_cos_theta = (1.0 - (1.0 - cos_theta.powi(2)) / outer_ior.powi(2)).sqrt();
+    Vec3::splat(fresnel_dielectric(fresnel_ior, refracted_cos_theta))
 }
 
 fn brdf_and_density(
@@ -45,10 +49,9 @@ fn brdf_and_density(
     microfacet_normal: Vec3,
     wi: Vec3,
     wo: Vec3,
-    ior: f32,
-    s_ior: f32,
-    coat_ior: f32,
-    coat_weight: f32,
+    ior_ratio: f32,
+    outer_ior: f32,
+    fresnel_ior: f32,
     specular_color: Vec3,
 ) -> (Vec3, f32) {
     let wi_dot_n = wi_rotated.dot(microfacet_normal);
@@ -58,9 +61,9 @@ fn brdf_and_density(
     let jacobian = 1.0 / (4.0 * wi_dot_n).abs().max(DENOM_TOLERANCE);
     let density = visible_normals * jacobian;
     let fresnel = if wi_rotated.cos_theta() > 0.0 {
-        specular_fresnel_with_coat(s_ior, coat_ior, coat_weight, wi_dot_n.abs(), ior)
+        specular_fresnel(outer_ior, fresnel_ior, wi_dot_n.abs())
     } else {
-        Vec3::splat(fresnel_dielectric(ior, wi_dot_n.abs()))
+        Vec3::splat(fresnel_dielectric(1.0 / ior_ratio, wi_dot_n.abs()))
     };
     let brdf = fresnel * d * microfacet.visibility(wi_rotated, wo_rotated)
         / (4.0 * wo.cos_theta().abs() * wi.cos_theta().abs()).max(DENOM_TOLERANCE)
@@ -69,11 +72,30 @@ fn brdf_and_density(
 }
 
 pub struct SpecularReflection {
-    pub specular_ior: f32,
-    pub specular_weight: f32,
+    /// The IOR ratio η_above / η_below across the specular interface.
+    ///
+    /// Encodes the full OpenPBR parameterization: `specular_weight` sets the target F0 at
+    /// normal incidence, and the coat compresses the apparent IOR seen from outside. A ratio
+    /// of exactly 1.0 means no index mismatch and therefore no reflection at all.
+    pub ior_ratio: f32,
+
+    /// IOR of the medium directly above the specular interface — in OpenPBR, the coat layer.
+    ///
+    /// Used to refract the incoming ray before evaluating Fresnel at the specular surface. A
+    /// denser outer medium (higher IOR) bends rays toward the normal, reducing the effective
+    /// angle of incidence and softening the grazing-angle reflections that would otherwise
+    /// dominate.
+    pub outer_ior: f32,
+
+    /// Effective IOR for evaluating Fresnel at the specular interface, blending `specular_ior`
+    /// toward `ior_ratio` as coat weight increases.
+    ///
+    /// In OpenPBR, it's computed as `specular_ior + coat_weight * (ior_ratio - specular_ior)`.
+    ///
+    /// So without a coat, this equals `specular_ior`. With a full coat, it shifts toward `ior_ratio`.
+    pub fresnel_ior: f32,
+
     pub specular_color: Vec3,
-    pub coat_ior: f32,
-    pub coat_weight: f32,
     pub roughness: f32,
     pub roughness_anisotropy: f32,
     pub rotation: f32,
@@ -81,12 +103,13 @@ pub struct SpecularReflection {
 
 impl From<&Material> for SpecularReflection {
     fn from(m: &Material) -> Self {
+        let ior_ratio =
+            specular_ior_ratio(m.specular_ior, m.coat_ior, m.coat_weight, m.specular_weight);
         Self {
-            specular_ior: m.specular_ior,
-            specular_weight: m.specular_weight,
+            ior_ratio,
+            outer_ior: m.coat_ior,
+            fresnel_ior: m.specular_ior + m.coat_weight * (ior_ratio - m.specular_ior),
             specular_color: m.specular_color,
-            coat_ior: m.coat_ior,
-            coat_weight: m.coat_weight,
             roughness: m.specular_roughness,
             roughness_anisotropy: m.specular_roughness_anisotropy,
             rotation: m.specular_rotation,
@@ -94,29 +117,9 @@ impl From<&Material> for SpecularReflection {
     }
 }
 
-impl SpecularReflection {
-    fn ior_ratio(&self) -> f32 {
-        specular_ior_ratio(
-            self.specular_ior,
-            self.coat_ior,
-            self.coat_weight,
-            self.specular_weight,
-        )
-    }
-
-    fn ior(&self, cos_theta: f32) -> f32 {
-        let ior_ratio = self.ior_ratio();
-        if cos_theta > 0.0 {
-            ior_ratio
-        } else {
-            1.0 / ior_ratio
-        }
-    }
-}
-
 impl Lobe for SpecularReflection {
-    fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        (self.ior(wi.cos_theta()) - 1.0).abs() >= IOR_EPSILON
+    fn incidence_is_valid(&self, _wi: Vec3) -> bool {
+        (self.ior_ratio - 1.0).abs() >= IOR_EPSILON
     }
 
     fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput {
@@ -124,8 +127,7 @@ impl Lobe for SpecularReflection {
             return Throughput::ZERO;
         }
 
-        let ior = self.ior(wi.cos_theta());
-        if (ior - 1.0).abs() < IOR_EPSILON {
+        if (self.ior_ratio - 1.0).abs() < IOR_EPSILON {
             return Throughput::ZERO;
         }
 
@@ -149,10 +151,9 @@ impl Lobe for SpecularReflection {
             microfacet_normal,
             wi,
             wo,
-            ior,
-            self.specular_ior,
-            self.coat_ior,
-            self.coat_weight,
+            self.ior_ratio,
+            self.outer_ior,
+            self.fresnel_ior,
             self.specular_color,
         );
 
@@ -160,8 +161,7 @@ impl Lobe for SpecularReflection {
     }
 
     fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
-        let ior = self.ior(wi.cos_theta());
-        if (ior - 1.0).abs() < IOR_EPSILON {
+        if (self.ior_ratio - 1.0).abs() < IOR_EPSILON {
             return Sample::ZERO;
         }
 
@@ -193,10 +193,9 @@ impl Lobe for SpecularReflection {
             microfacet_normal,
             wi,
             wo,
-            ior,
-            self.specular_ior,
-            self.coat_ior,
-            self.coat_weight,
+            self.ior_ratio,
+            self.outer_ior,
+            self.fresnel_ior,
             self.specular_color,
         );
 
@@ -212,7 +211,6 @@ impl Lobe for SpecularReflection {
             return 0.0;
         }
 
-        let ior = self.ior(wi.cos_theta());
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
@@ -227,10 +225,9 @@ impl Lobe for SpecularReflection {
             microfacet_normal,
             wi,
             wo,
-            ior,
-            self.specular_ior,
-            self.coat_ior,
-            self.coat_weight,
+            self.ior_ratio,
+            self.outer_ior,
+            self.fresnel_ior,
             self.specular_color,
         );
 

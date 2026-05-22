@@ -1,0 +1,27 @@
+use glam::Vec3;
+
+pub struct Material {
+    pub base_weight: f32,
+    pub base_color: Vec3,
+    pub base_roughness: f32,
+    pub base_metalness: f32,
+    pub specular_weight: f32,
+    pub specular_color: Vec3,
+    pub specular_ior: f32,
+    pub specular_roughness: f32,
+    pub specular_roughness_anisotropy: f32,
+    pub specular_rotation: f32,
+    pub transmission_weight: f32,
+    pub transmission_color: Vec3,
+    pub transmission_depth: f32,
+    pub coat_weight: f32,
+    pub coat_color: Vec3,
+    pub coat_ior: f32,
+    pub coat_roughness: f32,
+    pub coat_roughness_anisotropy: f32,
+    pub coat_rotation: f32,
+    pub coat_darkening: f32,
+    pub fuzz_weight: f32,
+    pub fuzz_color: Vec3,
+    pub fuzz_roughness: f32,
+}
