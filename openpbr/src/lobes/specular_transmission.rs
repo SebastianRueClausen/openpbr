@@ -15,8 +15,8 @@ use super::{Lobe, Sample, Throughput};
 fn refraction_direction(normal: Vec3, ior: f32, wi: Vec3) -> Option<Vec3> {
     let cos_theta_in = wi.dot(normal);
 
-    let sin_theta_in_sq = (1.0 - cos_theta_in * cos_theta_in).max(0.0);
-    let sin_theta_tr_sq = ior * ior * sin_theta_in_sq;
+    let sin_theta_in_sq = (1.0 - cos_theta_in.powi(2)).max(0.0);
+    let sin_theta_tr_sq = ior.powi(2) * sin_theta_in_sq;
 
     if sin_theta_tr_sq >= 1.0 {
         return None;
@@ -50,7 +50,7 @@ fn bsdf_and_density(
     let d = microfacet.distribution(microfacet_normal);
     let visible_normals = d * microfacet.masking(wi_rotated) * wi_dot_n.max(0.0)
         / wi_rotated.cos_theta().abs().max(DENOM_TOLERANCE);
-    let jacobian = ior * ior * wi.cos_theta().abs()
+    let jacobian = ior.powi(2) * wi.cos_theta().abs()
         / (wo.cos_theta() + ior * wi.cos_theta())
             .powi(2)
             .max(DENOM_TOLERANCE);
