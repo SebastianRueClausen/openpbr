@@ -7,7 +7,7 @@ use crate::{
 use glam::Vec3;
 use std::f32::consts::PI;
 
-use super::{Lobe, Sample, Throughput};
+use super::{Lobe, LobeType, Sample, Throughput};
 
 fn oren_nayar(cos_theta: f32, sigma_squared: f32) -> f32 {
     let a = 1.0 - 0.5 * (sigma_squared / (sigma_squared + 0.33));
@@ -49,7 +49,7 @@ impl From<&Material> for Diffuse {
         Self {
             weight: m.base_weight,
             color: m.base_color,
-            roughness: m.base_roughness,
+            roughness: m.base_diffuse_roughness,
         }
     }
 }
@@ -72,20 +72,21 @@ impl Lobe for Diffuse {
         ))
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
         if !self.incidence_is_valid(wi) {
-            return Sample::ZERO;
+            return None;
         }
 
         let wo = cosine_hemisphere_sample(random.truncate());
         let throughput = self.eval(wi, wo);
         let density = self.density(wi, wo);
 
-        Sample {
-            wo,
+        Some(Sample {
+            lobe_type: LobeType::Diffuse,
             throughput,
             density,
-        }
+            wo,
+        })
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {

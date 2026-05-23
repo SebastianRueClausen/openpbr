@@ -68,7 +68,7 @@ impl Bsdf {
     }
 
     /// Sample a lobe proportional to its weight, then evaluate all other lobes.
-    pub fn sample<S: Sampler>(&self, wi: Vec3, rng: &mut S) -> Sample {
+    pub fn sample<S: Sampler>(&self, wi: Vec3, rng: &mut S) -> Option<Sample> {
         let random_lobe = rng.next_f32();
         let random_sample = rng.next_vec3();
 
@@ -77,26 +77,33 @@ impl Bsdf {
         for lobe in ALL_LOBES {
             cumulative += self.probs[*lobe];
             if random_lobe < cumulative {
-                let lobe_sample = self.sample_lobe(*lobe, wi, random_sample);
-                let wo = lobe_sample.wo;
+                let Some(Sample {
+                    wo,
+                    density,
+                    throughput: lobe_throughput,
+                    ..
+                }) = self.sample_lobe(*lobe, wi, random_sample)
+                else {
+                    continue;
+                };
 
                 let (mut densities, throughput) = self.eval_lobes(wi, wo, Some(*lobe));
-                densities[*lobe] = lobe_sample.density;
+                densities[*lobe] = density;
 
-                return Sample {
-                    wo,
+                return Some(Sample {
                     throughput: Throughput {
-                        diffuse: throughput.diffuse
-                            + self.weights[*lobe] * lobe_sample.throughput.diffuse,
+                        diffuse: throughput.diffuse + self.weights[*lobe] * lobe_throughput.diffuse,
                         specular: throughput.specular
-                            + self.weights[*lobe] * lobe_sample.throughput.specular,
+                            + self.weights[*lobe] * lobe_throughput.specular,
                     },
                     density: total_density(&self.probs, &densities),
-                };
+                    lobe_type: *lobe,
+                    wo,
+                });
             }
         }
 
-        Sample::ZERO
+        None
     }
 
     fn eval_lobes(
@@ -132,7 +139,7 @@ impl Bsdf {
         (densities, throughput)
     }
 
-    fn sample_lobe(&self, lobe: LobeType, wi: Vec3, random: Vec3) -> Sample {
+    fn sample_lobe(&self, lobe: LobeType, wi: Vec3, random: Vec3) -> Option<Sample> {
         match lobe {
             LobeType::Fuzz => self.fuzz.sample(random, wi),
             LobeType::Coat => self.coat.sample(random, wi),

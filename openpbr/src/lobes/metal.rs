@@ -8,7 +8,7 @@ use crate::{
 use glam::Vec3;
 use std::f32::consts::PI;
 
-use super::{Lobe, Sample, Throughput};
+use super::{Lobe, LobeType, Sample, Throughput};
 
 /// F82-tint Schlick model. OpenPBR Eq. (30).
 /// `f0` is the normal-incidence reflectance (base_weight * base_color).
@@ -107,9 +107,9 @@ impl Lobe for Metal {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
         if wi.cos_theta() < DENOM_TOLERANCE {
-            return Sample::ZERO;
+            return None;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
@@ -120,7 +120,7 @@ impl Lobe for Metal {
         let wo_rotated = -wi_rotated.reflect(microfacet_normal);
 
         if !wi_rotated.in_same_hemisphere(&wo_rotated) {
-            return Sample::ZERO;
+            return None;
         }
 
         let wo = rotation.inverse_rotate(wo_rotated);
@@ -137,11 +137,12 @@ impl Lobe for Metal {
             tint,
         );
 
-        Sample {
-            wo,
+        Some(Sample {
+            lobe_type: LobeType::Metal,
             throughput: Throughput::from_specular(brdf),
             density,
-        }
+            wo,
+        })
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {

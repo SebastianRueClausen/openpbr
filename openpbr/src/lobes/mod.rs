@@ -1,7 +1,4 @@
-use crate::{
-    consts::{DENSITY_EPSILON, RADIANCE_EPSILON},
-    math::SphericalCoordinates,
-};
+use crate::{consts::DENSITY_EPSILON, math::SphericalCoordinates};
 use glam::Vec3;
 
 pub mod bsdf;
@@ -12,7 +9,10 @@ pub mod metal;
 pub mod specular_reflection;
 pub mod specular_transmission;
 
-#[derive(Default, Clone, Copy)]
+#[cfg(test)]
+mod test;
+
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Throughput {
     pub diffuse: Vec3,
     pub specular: Vec3,
@@ -46,26 +46,23 @@ impl Throughput {
     pub fn total(&self) -> Vec3 {
         self.diffuse + self.specular
     }
+
+    pub fn channel_total(&self, channel: usize) -> f32 {
+        self.diffuse[channel] + self.specular[channel]
+    }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Sample {
     pub wo: Vec3,
     pub throughput: Throughput,
     pub density: f32,
-}
-
-impl Sample {
-    pub const ZERO: Self = Self {
-        wo: Vec3::ZERO,
-        throughput: Throughput::ZERO,
-        density: 0.0,
-    };
+    pub lobe_type: LobeType,
 }
 
 pub trait Lobe {
     fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput;
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample;
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample>;
     fn density(&self, wi: Vec3, wo: Vec3) -> f32;
     fn incidence_is_valid(&self, wi: Vec3) -> bool;
 
@@ -77,12 +74,10 @@ pub trait Lobe {
         let mut albedo = Vec3::ZERO;
 
         for random in samples {
-            let sample = self.sample(*random, wi);
-
-            if sample.throughput.total().length() > RADIANCE_EPSILON {
+            if let Some(sample) = self.sample(*random, wi) {
                 albedo += sample.throughput.total() * sample.wo.cos_theta().abs()
                     / sample.density.max(DENSITY_EPSILON);
-            }
+            };
         }
 
         return albedo / samples.len() as f32;
@@ -97,4 +92,13 @@ pub enum LobeType {
     SpecularReflection = 3,
     SpecularTransmission = 4,
     Diffuse = 5,
+}
+
+impl LobeType {
+    pub fn is_specular(&self) -> bool {
+        match self {
+            LobeType::Fuzz | LobeType::Diffuse => false,
+            _ => true,
+        }
+    }
 }

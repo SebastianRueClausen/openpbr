@@ -8,7 +8,7 @@ use crate::{
 use glam::Vec3;
 use std::f32::consts::PI;
 
-use super::{Lobe, Sample, Throughput};
+use super::{Lobe, LobeType, Sample, Throughput};
 
 /// Computes the refracted direction. Returns None on total internal reflection.
 /// `ior` is n_i/n_t (incident over transmitted index of refraction).
@@ -149,7 +149,7 @@ impl Lobe for SpecularTransmission {
         Throughput::from_specular(btdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
         let ior = self.ior(wi);
 
         if (ior - 1.0).abs() < IOR_EPSILON {
@@ -157,11 +157,12 @@ impl Lobe for SpecularTransmission {
             let density = 1.0 / DENSITY_EPSILON;
             let value = tint(self.transmission_color, self.transmission_depth) * density
                 / wo.cos_theta().abs().max(DENOM_TOLERANCE);
-            return Sample {
-                wo,
+            return Some(Sample {
+                lobe_type: LobeType::SpecularTransmission,
                 throughput: Throughput::from_specular(value),
                 density,
-            };
+                wo,
+            });
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
@@ -177,15 +178,7 @@ impl Lobe for SpecularTransmission {
             n
         };
 
-        let refract_dir = match refraction_direction(microfacet_normal, ior, wi_rotated) {
-            None => {
-                return Sample {
-                    density: DENSITY_EPSILON,
-                    ..Sample::ZERO
-                }
-            }
-            Some(d) => d,
-        };
+        let refract_dir = refraction_direction(microfacet_normal, ior, wi_rotated)?;
 
         let wo_rotated = -refract_dir.normalize_or_zero();
         let wo = rotation.inverse_rotate(wo_rotated);
@@ -202,16 +195,17 @@ impl Lobe for SpecularTransmission {
             self.transmission_depth,
         );
 
-        Sample {
-            wo,
+        Some(Sample {
+            lobe_type: LobeType::SpecularTransmission,
             throughput: Throughput::from_specular(btdf),
             density,
-        }
+            wo,
+        })
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {
         if wi.in_same_hemisphere(&wo) {
-            return 1.0;
+            return 0.0;
         }
 
         let ior = self.ior(wi);

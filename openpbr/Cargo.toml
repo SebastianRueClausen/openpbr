@@ -9,7 +9,11 @@ rand = ["dep:rand"]
 [dependencies]
 enum-map = "2.7.3"
 glam = "0.32.1"
-rand = { version = "0.9", optional = true }
+rand = { version = "0.10", optional = true }
 
 [dev-dependencies]
 openpbr-oracle = { path = "../openpbr-oracle" }
+integrate = "0.3.1"
+statrs = "0.18.0"
+rand = "0.10"
+glam = { version = "0.32.1", features = ["rand"] }

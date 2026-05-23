@@ -8,7 +8,7 @@ use crate::{
 use glam::Vec3;
 use std::f32::consts::PI;
 
-use super::{Lobe, Sample, Throughput};
+use super::{Lobe, LobeType, Sample, Throughput};
 
 fn brdf_and_density(
     microfacet: &Microfacet,
@@ -84,32 +84,33 @@ impl Lobe for Coat {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
         if !self.incidence_is_valid(wi) {
-            return Sample::ZERO;
+            return None;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wi_rotated = rotation.rotate(wi);
         if wi_rotated.cos_theta() <= 0.0 {
-            return Sample::ZERO;
+            return None;
         }
         let microfacet_normal = microfacet.sample(wi_rotated, random.truncate());
         let wo_rotated = -wi_rotated.reflect(microfacet_normal);
         if !wi_rotated.in_same_hemisphere(&wo_rotated) {
-            return Sample::ZERO;
+            return None;
         }
         let wo = rotation.inverse_rotate(wo_rotated);
 
         let ior = self.ior(wi.cos_theta());
         let (brdf, density) = brdf_and_density(&microfacet, wi_rotated, wo_rotated, wi, wo, ior);
 
-        Sample {
-            wo,
+        Some(Sample {
+            lobe_type: LobeType::Coat,
             throughput: Throughput::from_specular(brdf),
             density,
-        }
+            wo,
+        })
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {

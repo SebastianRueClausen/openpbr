@@ -8,7 +8,7 @@ use crate::{
 use glam::Vec3;
 use std::f32::consts::PI;
 
-use super::{Lobe, Sample, Throughput};
+use super::{Lobe, LobeType, Sample, Throughput};
 
 /// Computes the effective specular IOR as seen from outside the coat layer. OpenPBR Eq. (60).
 ///
@@ -160,9 +160,9 @@ impl Lobe for SpecularReflection {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
         if (self.ior_ratio - 1.0).abs() < IOR_EPSILON {
-            return Sample::ZERO;
+            return None;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
@@ -181,7 +181,7 @@ impl Lobe for SpecularReflection {
 
         let wo_rotated = -wi_rotated.reflect(microfacet_normal);
         if !wi_rotated.in_same_hemisphere(&wo_rotated) {
-            return Sample::ZERO;
+            return None;
         }
 
         let wo = rotation.inverse_rotate(wo_rotated);
@@ -199,11 +199,12 @@ impl Lobe for SpecularReflection {
             self.specular_color,
         );
 
-        Sample {
-            wo,
+        Some(Sample {
+            lobe_type: LobeType::SpecularReflection,
             throughput: Throughput::from_specular(brdf),
             density,
-        }
+            wo,
+        })
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {

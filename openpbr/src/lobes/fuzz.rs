@@ -1,13 +1,20 @@
+//! # Fuzz
+//!
+//! This is an implementation of the fuzz (also known as sheen) lobe.
+//!
+//! As recommended by the OpenPBR specification, and following the official reference
+//! implementation and the Adobe implementation, it's an implementation of the model proposed
+//! by the paper "Practical Multiple-Scattering Sheen Using Linearly Transformed Cosines"
+//! by Zeltner, Burley, and Chiang (2022).
+
 use crate::{
-    consts::DENOM_TOLERANCE,
-    material::Material,
-    math::SphericalCoordinates,
+    consts::DENOM_TOLERANCE, material::Material, math::SphericalCoordinates,
     sampling::cosine_hemisphere_sample,
 };
 use glam::{Mat3, Vec3};
 use std::f32::consts::PI;
 
-use super::{Lobe, Sample, Throughput};
+use super::{Lobe, LobeType, Sample, Throughput};
 
 fn albedo(x: f32, y: f32) -> f32 {
     let s = y * (0.0206607 + 1.58491 * y) / (0.0379424 + y * (1.32227 + y));
@@ -83,9 +90,9 @@ impl Lobe for Fuzz {
         Throughput::from_diffuse(brdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Sample {
+    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
         if !self.incidence_is_valid(wi) {
-            return Sample::ZERO;
+            return None;
         }
 
         let roughness = self.roughness.clamp(0.01, 1.0);
@@ -103,11 +110,12 @@ impl Lobe for Fuzz {
         let wo = basis * w.normalize();
         let (brdf, density) = brdf_and_density(self.color, direction, wi, a_inv, roughness);
 
-        Sample {
-            wo,
+        Some(Sample {
+            lobe_type: LobeType::Fuzz,
             throughput: Throughput::from_diffuse(brdf),
             density,
-        }
+            wo,
+        })
     }
 
     fn density(&self, wi: Vec3, wo: Vec3) -> f32 {
