@@ -83,7 +83,7 @@ impl Lobe for Fuzz {
             lobe_type: LobeType::Fuzz,
             throughput,
             density,
-            wo: wi,
+            wi,
         })
     }
 

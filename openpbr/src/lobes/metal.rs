@@ -24,22 +24,22 @@ fn fresnel_metal(cos_theta: f32, f0: Vec3, tint: Vec3) -> Vec3 {
 fn brdf_and_density(
     microfacet: &Microfacet,
     microfacet_normal: Vec3,
-    wi_rotated: Vec3,
     wo_rotated: Vec3,
-    wi: Vec3,
+    wi_rotated: Vec3,
     wo: Vec3,
+    wi: Vec3,
     f0: Vec3,
     tint: Vec3,
 ) -> (Vec3, f32) {
-    let wi_dot_n = wi_rotated.dot(microfacet_normal);
+    let wo_dot_n = wo_rotated.dot(microfacet_normal);
     let d = microfacet.distribution(microfacet_normal);
-    let visible_normals = d * microfacet.masking(wi_rotated) * wi_dot_n.max(0.0)
-        / wi_rotated.cos_theta().max(DENOM_TOLERANCE);
-    let jacobian = 1.0 / (4.0 * wi_dot_n).abs().max(DENOM_TOLERANCE);
+    let visible_normals = d * microfacet.masking(wo_rotated) * wo_dot_n.max(0.0)
+        / wo_rotated.cos_theta().max(DENOM_TOLERANCE);
+    let jacobian = 1.0 / (4.0 * wo_dot_n).abs().max(DENOM_TOLERANCE);
     let density = (visible_normals * jacobian).max(DENSITY_EPSILON);
-    let fresnel = fresnel_metal(wi_dot_n.abs(), f0, tint);
-    let brdf = fresnel * d * microfacet.visibility(wi_rotated, wo_rotated)
-        / (4.0 * wo.cos_theta().abs() * wi.cos_theta().abs()).max(DENOM_TOLERANCE);
+    let fresnel = fresnel_metal(wo_dot_n.abs(), f0, tint);
+    let brdf = fresnel * d * microfacet.visibility(wo_rotated, wi_rotated)
+        / (4.0 * wi.cos_theta().abs() * wo.cos_theta().abs()).max(DENOM_TOLERANCE);
     (brdf, density)
 }
 
@@ -80,26 +80,26 @@ impl Lobe for Metal {
         wi.cos_theta() >= DENOM_TOLERANCE
     }
 
-    fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput {
-        if wi.cos_theta() < DENOM_TOLERANCE || wo.cos_theta() < DENOM_TOLERANCE {
+    fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
+        if wo.cos_theta() < DENOM_TOLERANCE || wi.cos_theta() < DENOM_TOLERANCE {
             return Throughput::ZERO;
         }
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+        let wi_rotated = rotation.rotate(wi);
 
-        let microfacet_normal = (wi_rotated + wo_rotated).normalize();
+        let microfacet_normal = (wo_rotated + wi_rotated).normalize();
         let (f0, tint) = self.f0_tint();
 
         let (brdf, _) = brdf_and_density(
             &microfacet,
             microfacet_normal,
-            wi_rotated,
             wo_rotated,
-            wi,
+            wi_rotated,
             wo,
+            wi,
             f0,
             tint,
         );
@@ -107,32 +107,32 @@ impl Lobe for Metal {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
-        if wi.cos_theta() < DENOM_TOLERANCE {
+    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+        if wo.cos_theta() < DENOM_TOLERANCE {
             return None;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wi_rotated = rotation.rotate(wi);
-        let microfacet_normal = microfacet.sample(wi_rotated, random.truncate());
-        let wo_rotated = -wi_rotated.reflect(microfacet_normal);
+        let wo_rotated = rotation.rotate(wo);
+        let microfacet_normal = microfacet.sample(wo_rotated, random.truncate());
+        let wi_rotated = -wo_rotated.reflect(microfacet_normal);
 
-        if !wi_rotated.in_same_hemisphere(&wo_rotated) {
+        if !wo_rotated.in_same_hemisphere(&wi_rotated) {
             return None;
         }
 
-        let wo = rotation.inverse_rotate(wo_rotated);
+        let wi = rotation.inverse_rotate(wi_rotated);
         let (f0, tint) = self.f0_tint();
 
         let (brdf, density) = brdf_and_density(
             &microfacet,
             microfacet_normal,
-            wi_rotated,
             wo_rotated,
-            wi,
+            wi_rotated,
             wo,
+            wi,
             f0,
             tint,
         );
@@ -141,30 +141,30 @@ impl Lobe for Metal {
             lobe_type: LobeType::Metal,
             throughput: Throughput::from_specular(brdf),
             density,
-            wo,
+            wi,
         })
     }
 
-    fn density(&self, wi: Vec3, wo: Vec3) -> f32 {
-        if wi.cos_theta() < DENOM_TOLERANCE || wo.cos_theta() < DENOM_TOLERANCE {
+    fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
+        if wo.cos_theta() < DENOM_TOLERANCE || wi.cos_theta() < DENOM_TOLERANCE {
             return DENSITY_EPSILON;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+        let wi_rotated = rotation.rotate(wi);
 
-        let microfacet_normal = (wi_rotated + wo_rotated).normalize();
+        let microfacet_normal = (wo_rotated + wi_rotated).normalize();
         let (f0, tint) = self.f0_tint();
         let (_, density) = brdf_and_density(
             &microfacet,
             microfacet_normal,
-            wi_rotated,
             wo_rotated,
-            wi,
+            wi_rotated,
             wo,
+            wi,
             f0,
             tint,
         );

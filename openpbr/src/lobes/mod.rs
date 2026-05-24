@@ -54,28 +54,28 @@ impl Throughput {
 
 #[derive(Clone, Copy)]
 pub struct Sample {
-    pub wo: Vec3,
+    pub wi: Vec3,
     pub throughput: Throughput,
     pub density: f32,
     pub lobe_type: LobeType,
 }
 
 pub trait Lobe {
-    fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput;
-    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample>;
-    fn density(&self, wi: Vec3, wo: Vec3) -> f32;
-    fn incidence_is_valid(&self, wi: Vec3) -> bool;
+    fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput;
+    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample>;
+    fn density(&self, wo: Vec3, wi: Vec3) -> f32;
+    fn incidence_is_valid(&self, wo: Vec3) -> bool;
 
-    fn estimate_directional_albedo(&self, wi: Vec3, samples: &[Vec3]) -> Vec3 {
-        if !self.incidence_is_valid(wi) {
+    fn estimate_directional_albedo(&self, wo: Vec3, samples: &[Vec3]) -> Vec3 {
+        if !self.incidence_is_valid(wo) {
             return Vec3::ZERO;
         }
 
         let mut albedo = Vec3::ZERO;
 
         for random in samples {
-            if let Some(sample) = self.sample(*random, wi) {
-                albedo += sample.throughput.total() * sample.wo.cos_theta().abs()
+            if let Some(sample) = self.sample(*random, wo) {
+                albedo += sample.throughput.total() * sample.wi.cos_theta().abs()
                     / sample.density.max(DENSITY_EPSILON);
             };
         }

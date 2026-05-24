@@ -59,7 +59,7 @@ impl Lobe for Diffuse {
         wi.cos_theta() >= DENOM_TOLERANCE
     }
 
-    fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput {
+    fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
             return Throughput::ZERO;
         }
@@ -72,29 +72,29 @@ impl Lobe for Diffuse {
         ))
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
-        if !self.incidence_is_valid(wi) {
+    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+        if !self.incidence_is_valid(wo) {
             return None;
         }
 
-        let wo = cosine_hemisphere_sample(random.truncate());
-        let throughput = self.eval(wi, wo);
-        let density = self.density(wi, wo);
+        let wi = cosine_hemisphere_sample(random.truncate());
+        let throughput = self.eval(wo, wi);
+        let density = self.density(wo, wi);
 
         Some(Sample {
             lobe_type: LobeType::Diffuse,
             throughput,
             density,
-            wo,
+            wi,
         })
     }
 
-    fn density(&self, wi: Vec3, wo: Vec3) -> f32 {
-        if !self.incidence_is_valid(wi) {
+    fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
+        if !self.incidence_is_valid(wo) {
             return 0.0;
         }
 
-        cosine_hemisphere_density(wo.cos_theta())
+        cosine_hemisphere_density(wi.cos_theta())
     }
 
     fn estimate_directional_albedo(&self, wi: Vec3, _: &[Vec3]) -> Vec3 {

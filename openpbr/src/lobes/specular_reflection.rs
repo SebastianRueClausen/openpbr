@@ -44,29 +44,29 @@ fn specular_fresnel(outer_ior: f32, fresnel_ior: f32, cos_theta: f32) -> Vec3 {
 
 fn brdf_and_density(
     microfacet: &Microfacet,
-    wi_rotated: Vec3,
     wo_rotated: Vec3,
+    wi_rotated: Vec3,
     microfacet_normal: Vec3,
-    wi: Vec3,
     wo: Vec3,
+    wi: Vec3,
     ior_ratio: f32,
     outer_ior: f32,
     fresnel_ior: f32,
     specular_color: Vec3,
 ) -> (Vec3, f32) {
-    let wi_dot_n = wi_rotated.dot(microfacet_normal);
+    let wo_dot_n = wo_rotated.dot(microfacet_normal);
     let d = microfacet.distribution(microfacet_normal);
-    let visible_normals = d * microfacet.masking(wi_rotated) * wi_dot_n.max(0.0)
-        / wi_rotated.cos_theta().max(DENOM_TOLERANCE);
-    let jacobian = 1.0 / (4.0 * wi_dot_n).abs().max(DENOM_TOLERANCE);
+    let visible_normals = d * microfacet.masking(wo_rotated) * wo_dot_n.max(0.0)
+        / wo_rotated.cos_theta().max(DENOM_TOLERANCE);
+    let jacobian = 1.0 / (4.0 * wo_dot_n).abs().max(DENOM_TOLERANCE);
     let density = visible_normals * jacobian;
-    let fresnel = if wi_rotated.cos_theta() > 0.0 {
-        specular_fresnel(outer_ior, fresnel_ior, wi_dot_n.abs())
+    let fresnel = if wo_rotated.cos_theta() > 0.0 {
+        specular_fresnel(outer_ior, fresnel_ior, wo_dot_n.abs())
     } else {
-        Vec3::splat(fresnel_dielectric(1.0 / ior_ratio, wi_dot_n.abs()))
+        Vec3::splat(fresnel_dielectric(1.0 / ior_ratio, wo_dot_n.abs()))
     };
-    let brdf = fresnel * d * microfacet.visibility(wi_rotated, wo_rotated)
-        / (4.0 * wo.cos_theta().abs() * wi.cos_theta().abs()).max(DENOM_TOLERANCE)
+    let brdf = fresnel * d * microfacet.visibility(wo_rotated, wi_rotated)
+        / (4.0 * wi.cos_theta().abs() * wo.cos_theta().abs()).max(DENOM_TOLERANCE)
         * specular_color;
     (brdf, density)
 }
@@ -122,8 +122,8 @@ impl Lobe for SpecularReflection {
         (self.ior_ratio - 1.0).abs() >= IOR_EPSILON
     }
 
-    fn eval(&self, wi: Vec3, wo: Vec3) -> Throughput {
-        if !wi.in_same_hemisphere(&wo) {
+    fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
+        if !wo.in_same_hemisphere(&wi) {
             return Throughput::ZERO;
         }
 
@@ -134,23 +134,23 @@ impl Lobe for SpecularReflection {
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+        let wi_rotated = rotation.rotate(wi);
 
-        let microfacet_normal = (wi_rotated + wo_rotated).normalize();
-        if wi_rotated.dot(microfacet_normal) * wi_rotated.cos_theta() < 0.0
-            || wo_rotated.dot(microfacet_normal) * wo_rotated.cos_theta() < 0.0
+        let microfacet_normal = (wo_rotated + wi_rotated).normalize();
+        if wo_rotated.dot(microfacet_normal) * wo_rotated.cos_theta() < 0.0
+            || wi_rotated.dot(microfacet_normal) * wi_rotated.cos_theta() < 0.0
         {
             return Throughput::ZERO;
         }
 
         let (brdf, _) = brdf_and_density(
             &microfacet,
-            wi_rotated,
             wo_rotated,
+            wi_rotated,
             microfacet_normal,
-            wi,
             wo,
+            wi,
             self.ior_ratio,
             self.outer_ior,
             self.fresnel_ior,
@@ -160,7 +160,7 @@ impl Lobe for SpecularReflection {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wi: Vec3) -> Option<Sample> {
+    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
         if (self.ior_ratio - 1.0).abs() < IOR_EPSILON {
             return None;
         }
@@ -168,31 +168,31 @@ impl Lobe for SpecularReflection {
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wi_rotated = rotation.rotate(wi);
+        let wo_rotated = rotation.rotate(wo);
 
-        let microfacet_normal = if wi_rotated.cos_theta() > 0.0 {
-            microfacet.sample(wi_rotated, random.truncate())
+        let microfacet_normal = if wo_rotated.cos_theta() > 0.0 {
+            microfacet.sample(wo_rotated, random.truncate())
         } else {
-            let wi_flipped = Vec3::new(wi_rotated.x, wi_rotated.y, -wi_rotated.z);
-            let mut n = microfacet.sample(wi_flipped, random.truncate());
+            let wo_flipped = Vec3::new(wo_rotated.x, wo_rotated.y, -wo_rotated.z);
+            let mut n = microfacet.sample(wo_flipped, random.truncate());
             n.z = -n.z;
             n
         };
 
-        let wo_rotated = -wi_rotated.reflect(microfacet_normal);
-        if !wi_rotated.in_same_hemisphere(&wo_rotated) {
+        let wi_rotated = -wo_rotated.reflect(microfacet_normal);
+        if !wo_rotated.in_same_hemisphere(&wi_rotated) {
             return None;
         }
 
-        let wo = rotation.inverse_rotate(wo_rotated);
+        let wi = rotation.inverse_rotate(wi_rotated);
 
         let (brdf, density) = brdf_and_density(
             &microfacet,
-            wi_rotated,
             wo_rotated,
+            wi_rotated,
             microfacet_normal,
-            wi,
             wo,
+            wi,
             self.ior_ratio,
             self.outer_ior,
             self.fresnel_ior,
@@ -203,29 +203,29 @@ impl Lobe for SpecularReflection {
             lobe_type: LobeType::SpecularReflection,
             throughput: Throughput::from_specular(brdf),
             density,
-            wo,
+            wi,
         })
     }
 
-    fn density(&self, wi: Vec3, wo: Vec3) -> f32 {
-        if !wi.in_same_hemisphere(&wo) {
+    fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
+        if !wo.in_same_hemisphere(&wi) {
             return 0.0;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wi_rotated = rotation.rotate(wi);
         let wo_rotated = rotation.rotate(wo);
+        let wi_rotated = rotation.rotate(wi);
 
-        let microfacet_normal = (wi_rotated + wo_rotated).normalize();
+        let microfacet_normal = (wo_rotated + wi_rotated).normalize();
         let (_, density) = brdf_and_density(
             &microfacet,
-            wi_rotated,
             wo_rotated,
+            wi_rotated,
             microfacet_normal,
-            wi,
             wo,
+            wi,
             self.ior_ratio,
             self.outer_ior,
             self.fresnel_ior,

@@ -39,20 +39,20 @@ pub struct LobeTest<'a, L> {
 
 impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
     /// Generate a frequency table for the given view direction by sampling `sample` of the lobe.
-    fn freq_table(&self, wi: Vec3, rng: &mut impl rand::Rng) -> Vec<f32> {
+    fn freq_table(&self, wo: Vec3, rng: &mut impl rand::Rng) -> Vec<f32> {
         let theta_factor = self.theta_bin_count as f32 / PI;
         let phi_factor = self.phi_bin_count as f32 / (2.0 * PI);
 
         let mut bins = vec![0.0f32; self.theta_bin_count * self.phi_bin_count];
 
         for _ in 0..self.sample_count {
-            let Some(Sample { wo, .. }) = self.lobe.sample(rng.random(), wi) else {
+            let Some(Sample { wi, .. }) = self.lobe.sample(rng.random(), wo) else {
                 continue;
             };
 
-            let theta = wo.cos_theta().acos() * theta_factor;
+            let theta = wi.cos_theta().acos() * theta_factor;
 
-            let mut phi = f32::atan2(wo.y, wo.x) * phi_factor;
+            let mut phi = f32::atan2(wi.y, wi.x) * phi_factor;
             if phi < 0.0 {
                 phi += 2.0 * PI * phi_factor;
             }
@@ -66,7 +66,7 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
         bins
     }
 
-    fn integrated_freq_table(&self, view: Vec3) -> Vec<f32> {
+    fn integrated_freq_table(&self, wo: Vec3) -> Vec<f32> {
         let theta_factor = PI / self.theta_bin_count as f32;
         let phi_factor = 2.0 * PI / self.phi_bin_count as f32;
         let mut bins = Vec::with_capacity(self.theta_bin_count * self.phi_bin_count);
@@ -85,7 +85,7 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
                     |theta, phi| {
                         let density = self
                             .lobe
-                            .density(view, Vec3::from_spherical_coordinates(theta, phi));
+                            .density(wo, Vec3::from_spherical_coordinates(theta, phi));
                         density * theta.sin()
                     },
                 );
@@ -140,14 +140,14 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
     pub fn run(&self, rng: &mut impl rand::Rng) {
         let significance_level: f32 = 0.01;
 
-        let view = sampling::uniform_hemisphere(rng.random());
+        let wo = sampling::uniform_hemisphere(rng.random());
 
-        let expected_freqs = self.integrated_freq_table(view);
+        let expected_freqs = self.integrated_freq_table(wo);
 
         // `expected_freqs.iter().sum::<f32>()` should be close to `self.sample_count`, but the
         // integration does not seem to accurate enough to reliably test it.
 
-        let freqs = self.freq_table(view, rng);
+        let freqs = self.freq_table(wo, rng);
 
         let pval = self.chi_squared_test(&freqs, &expected_freqs);
         assert!(
@@ -158,10 +158,10 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
         // Test Helmholtz reciprocity.
 
         for _ in 0..self.sample_count {
-            let view = sampling::uniform_hemisphere(rng.random());
-            let light = sampling::uniform_hemisphere(rng.random());
-            let a = self.lobe.eval(view, light);
-            let b = self.lobe.eval(light, view);
+            let wo = sampling::uniform_hemisphere(rng.random());
+            let wi = sampling::uniform_hemisphere(rng.random());
+            let a = self.lobe.eval(wo, wi);
+            let b = self.lobe.eval(wi, wo);
             let error = throughput_error(&a, &b);
             for error in error.to_array().into_iter() {
                 assert!(error <= 1e-3, "bsdf is not reciprocal: {a:?} != {b:?}");
@@ -180,10 +180,10 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
                 self.theta_integrate_dim,
                 self.phi_integrate_dim,
                 |theta, phi| {
-                    let light = Vec3::from_spherical_coordinates(theta, phi);
-                    self.lobe.eval(view, light).channel_total(channel)
-                        * light.cos_theta().abs()
-                        * light.sin_theta()
+                    let wi = Vec3::from_spherical_coordinates(theta, phi);
+                    self.lobe.eval(wo, wi).channel_total(channel)
+                        * wi.cos_theta().abs()
+                        * wi.sin_theta()
                 },
             );
             assert!(
