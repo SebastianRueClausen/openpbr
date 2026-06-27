@@ -7,12 +7,7 @@
 //! by the paper "Practical Multiple-Scattering Sheen Using Linearly Transformed Cosines"
 //! by Zeltner, Burley, and Chiang (2022).
 
-use crate::{
-    consts::DENOM_TOLERANCE,
-    material::Material,
-    math::SphericalCoordinates,
-    sampling::{self},
-};
+use crate::{material::Material, math::SphericalCoordinates, sampling};
 use glam::{Vec2, Vec3};
 use std::f32::consts::PI;
 
@@ -43,11 +38,11 @@ fn phi(v: Vec3) -> f32 {
 
 impl Lobe for Fuzz {
     fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        wi.cos_theta() >= DENOM_TOLERANCE
+        wi.in_upper_hemisphere()
     }
 
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
-        if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
+        if !wi.in_upper_hemisphere() || !wo.in_upper_hemisphere() {
             return Throughput::ZERO;
         }
 
@@ -65,7 +60,7 @@ impl Lobe for Fuzz {
     }
 
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
-        if !self.incidence_is_valid(wo) {
+        if !wo.in_upper_hemisphere() {
             return None;
         }
 
@@ -88,7 +83,7 @@ impl Lobe for Fuzz {
     }
 
     fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
-        if !self.incidence_is_valid(wi) || wo.cos_theta() < DENOM_TOLERANCE {
+        if !wi.in_upper_hemisphere() || !wo.in_upper_hemisphere() {
             return 0.0;
         }
 

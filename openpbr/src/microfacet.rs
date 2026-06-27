@@ -1,3 +1,4 @@
+use crate::consts::DENOM_TOLERANCE;
 use crate::math::{SphericalCoordinates, SurfaceBasis};
 use crate::sampling;
 use glam::{FloatExt, Vec2, Vec3};
@@ -49,33 +50,30 @@ impl Microfacet {
     }
 
     #[allow(dead_code)]
-    pub fn density(&self, view: Vec3, microfacet_normal: Vec3) -> f32 {
-        self.masking(view)
-            * view.dot(microfacet_normal).abs()
-            * self.distribution(microfacet_normal)
-            / view.cos_theta().abs()
+    pub fn density(&self, wi: Vec3, microfacet_normal: Vec3) -> f32 {
+        self.masking(wi) * wi.dot(microfacet_normal).abs() * self.distribution(microfacet_normal)
+            / wi.cos_theta().abs().max(DENOM_TOLERANCE)
     }
 
-    pub fn sample(&self, wi: Vec3, random: Vec2) -> Vec3 {
-        let mut view_hemisphere =
-            Vec3::new(wi.x * self.alpha.x, wi.y * self.alpha.y, wi.z).normalize();
-        if view_hemisphere.cos_theta() < 0.0 {
-            view_hemisphere = -view_hemisphere;
+    pub fn sample(&self, wo: Vec3, random: Vec2) -> Vec3 {
+        let mut wi = Vec3::new(wo.x * self.alpha.x, wo.y * self.alpha.y, wo.z).normalize();
+        if wi.cos_theta() < 0.0 {
+            wi = -wi;
         }
-        let tangent = if view_hemisphere.cos_theta() < 0.99999 {
-            Vec3::Z.cross(view_hemisphere).normalize()
+        let tangent = if wi.cos_theta() < 0.99999 {
+            Vec3::Z.cross(wi).normalize()
         } else {
             Vec3::X
         };
         let basis = SurfaceBasis {
-            normal: view_hemisphere,
-            bitangent: view_hemisphere.cross(tangent),
+            normal: wi,
             tangent,
+            bitangent: wi.cross(tangent),
         };
         let mut p = sampling::uniform_disk_polar(random);
         p.y = (1.0 - p.x.powi(2))
             .sqrt()
-            .lerp(p.y, (1.0 + view_hemisphere.cos_theta()) / 2.0);
+            .lerp(p.y, (1.0 + wi.cos_theta()) / 2.0);
         let z = (1.0 - p.length_squared()).max(0.0).sqrt();
         let normal = basis.transform(p.extend(z)) * self.alpha.extend(1.0);
         normal.with_z(normal.z.max(1e-6)).normalize()

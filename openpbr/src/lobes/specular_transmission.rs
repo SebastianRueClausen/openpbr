@@ -1,5 +1,5 @@
 use crate::{
-    consts::{DENOM_TOLERANCE, DENSITY_EPSILON, IOR_EPSILON},
+    consts::DENOM_TOLERANCE,
     fresnel::fresnel_dielectric,
     material::Material,
     math::{LocalRotation, SphericalCoordinates},
@@ -10,29 +10,29 @@ use std::f32::consts::PI;
 
 use super::{Lobe, LobeType, Sample, Throughput};
 
-/// Computes the refracted direction. Returns None on total internal reflection.
-/// `ior` is n_i/n_t (incident over transmitted index of refraction).
-fn refraction_direction(normal: Vec3, ior: f32, wo: Vec3) -> Option<Vec3> {
-    let cos_theta_in = wo.dot(normal);
-
-    let sin_theta_in_sq = (1.0 - cos_theta_in.powi(2)).max(0.0);
-    let sin_theta_tr_sq = ior.powi(2) * sin_theta_in_sq;
-
-    if sin_theta_tr_sq >= 1.0 {
-        return None;
-    }
-
-    let cos_theta_tr = (1.0 - sin_theta_tr_sq).sqrt();
-
-    Some(ior * (-wo) + (ior * cos_theta_in - cos_theta_tr) * normal)
-}
-
 fn tint(transmission_color: Vec3, transmission_depth: f32) -> Vec3 {
     if transmission_depth == 0.0 {
         transmission_color
     } else {
         Vec3::ONE
     }
+}
+
+// Recover the microfacet normal. Returns `None` if the normal could not have been sampled.
+fn microfacet_normal(wo: Vec3, wi: Vec3, ior: f32) -> Option<Vec3> {
+    let n = (-wi - ior * wo).try_normalize()?;
+
+    let h = if n.dot(wo) > 0.0 {
+        n
+    } else {
+        if ior > 1.0 {
+            -n
+        } else {
+            return None;
+        }
+    };
+
+    h.in_same_hemisphere(&wo).then_some(h)
 }
 
 fn bsdf_and_density(
@@ -46,23 +46,31 @@ fn bsdf_and_density(
     transmission_color: Vec3,
     transmission_depth: f32,
 ) -> (Vec3, f32) {
-    let wo_dot_n = wo_rotated.dot(microfacet_normal);
+    let wo_dot_normal = wo_rotated.dot(microfacet_normal);
     let d = microfacet.distribution(microfacet_normal);
-    let visible_normals = d * microfacet.masking(wo_rotated) * wo_dot_n.max(0.0)
+    let microfacet_density = d * microfacet.masking(wo_rotated) * wo_dot_normal.max(0.0)
         / wo_rotated.cos_theta().abs().max(DENOM_TOLERANCE);
-    let jacobian = ior.powi(2) * wo.cos_theta().abs()
-        / (wi.cos_theta() + ior * wo.cos_theta())
-            .powi(2)
-            .max(DENOM_TOLERANCE);
-    let density = visible_normals * jacobian;
+
+    let cos_tangent_squared = 1.0 - ior.powi(2) * (1.0 - wo_dot_normal.max(0.0).powi(2)).max(0.0);
+    if cos_tangent_squared < 0.0 {
+        // Total internal reflection.
+        return (Vec3::ZERO, 0.0);
+    }
+
+    let cos_tangent = cos_tangent_squared.sqrt();
+
+    let refraction_denom = (ior * wo_dot_normal.max(0.0) - cos_tangent)
+        .powi(2)
+        .max(DENOM_TOLERANCE);
+
+    // See Walter et al. (2007) Eq. 17.
+    let density = microfacet_density * cos_tangent / refraction_denom;
     let visibility = microfacet.visibility(wo_rotated, wi_rotated);
-    let transmission = (1.0 - fresnel_dielectric(1.0 / ior, wo_dot_n.abs())).max(0.0);
-    let btdf = transmission * wo_dot_n.abs() * jacobian * visibility * d
-        / (wi.cos_theta().abs() * wo.cos_theta().abs()).max(DENOM_TOLERANCE);
-    (
-        Vec3::splat(btdf) * tint(transmission_color, transmission_depth),
-        density,
-    )
+    let transmission =
+        (1.0 - fresnel_dielectric(1.0 / ior, wo_dot_normal.max(0.0))).clamp(0.0, 1.0);
+    let btdf = transmission * wo_dot_normal.max(0.0) * cos_tangent * visibility * d
+        / (wi.cos_theta().abs() * wo.cos_theta().abs() * refraction_denom).max(DENOM_TOLERANCE);
+    (btdf * tint(transmission_color, transmission_depth), density)
 }
 
 pub struct SpecularTransmission {
@@ -88,8 +96,9 @@ impl From<&Material> for SpecularTransmission {
 }
 
 impl SpecularTransmission {
+    // Compute the index of refraction based on the whether the ray is entering or leaving surface.
     fn ior(&self, wo: Vec3) -> f32 {
-        if wo.cos_theta() > 0.0 {
+        if wo.in_upper_hemisphere() {
             1.0 / self.specular_ior
         } else {
             self.specular_ior
@@ -108,29 +117,13 @@ impl Lobe for SpecularTransmission {
         }
 
         let ior = self.ior(wo);
-        if (ior - 1.0).abs() < IOR_EPSILON {
-            let density = 1.0 / DENSITY_EPSILON;
-            let value = tint(self.transmission_color, self.transmission_depth) * density
-                / wi.cos_theta().abs().max(DENOM_TOLERANCE);
-            return Throughput::from_specular(value);
-        }
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wo_rotated = rotation.rotate(wo);
         let wi_rotated = rotation.rotate(wi);
 
-        let microfacet_normal_raw = -wi_rotated - ior * wo_rotated;
-        if microfacet_normal_raw.length_squared() == 0.0 {
+        let Some(microfacet_normal) = microfacet_normal(wo_rotated, wi_rotated, ior) else {
             return Throughput::ZERO;
-        }
-
-        let microfacet_normal = {
-            let n = microfacet_normal_raw.normalize_or_zero();
-            if n.cos_theta() <= 0.0 {
-                -n
-            } else {
-                n
-            }
         };
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
@@ -152,35 +145,21 @@ impl Lobe for SpecularTransmission {
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
         let ior = self.ior(wo);
 
-        if (ior - 1.0).abs() < IOR_EPSILON {
-            let wi = -wo;
-            let density = 1.0 / DENSITY_EPSILON;
-            let value = tint(self.transmission_color, self.transmission_depth) * density
-                / wi.cos_theta().abs().max(DENOM_TOLERANCE);
-            return Some(Sample {
-                lobe_type: LobeType::SpecularTransmission,
-                throughput: Throughput::from_specular(value),
-                density,
-                wi,
-            });
-        }
-
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wo_rotated = rotation.rotate(wo);
 
-        let microfacet_normal = if wo_rotated.cos_theta() > 0.0 {
+        let microfacet_normal = if wo_rotated.in_upper_hemisphere() {
             microfacet.sample(wo_rotated, random.truncate())
         } else {
-            let wo_flipped = Vec3::new(wo_rotated.x, wo_rotated.y, -wo_rotated.z);
-            let mut n = microfacet.sample(wo_flipped, random.truncate());
-            n.z = -n.z;
-            n
+            microfacet
+                .sample(wo_rotated.flip_hemisphere(), random.truncate())
+                .flip_hemisphere()
         };
 
-        let refract_dir = refraction_direction(microfacet_normal, ior, wo_rotated)?;
-
-        let wi_rotated = refract_dir.normalize_or_zero();
+        let wi_rotated = (-wo_rotated)
+            .refract(microfacet_normal, ior)
+            .try_normalize()?;
         let wi = rotation.inverse_rotate(wi_rotated);
 
         let (btdf, density) = bsdf_and_density(
@@ -209,27 +188,15 @@ impl Lobe for SpecularTransmission {
         }
 
         let ior = self.ior(wo);
-        if (ior - 1.0).abs() < IOR_EPSILON {
-            return 1.0 / DENSITY_EPSILON;
-        }
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wo_rotated = rotation.rotate(wo);
         let wi_rotated = rotation.rotate(wi);
 
-        let microfacet_normal_raw = -wi_rotated - ior * wo_rotated;
-        if microfacet_normal_raw.length_squared() == 0.0 {
+        let Some(microfacet_normal) = microfacet_normal(wo_rotated, wi_rotated, ior) else {
             return 0.0;
-        }
-
-        let microfacet_normal = {
-            let n = microfacet_normal_raw.normalize_or_zero();
-            if n.cos_theta() <= 0.0 {
-                -n
-            } else {
-                n
-            }
         };
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
         let (_, density) = bsdf_and_density(
             &microfacet,

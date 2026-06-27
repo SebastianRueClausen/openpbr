@@ -77,13 +77,14 @@ impl Metal {
 
 impl Lobe for Metal {
     fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        wi.cos_theta() >= DENOM_TOLERANCE
+        wi.in_upper_hemisphere()
     }
 
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
-        if wo.cos_theta() < DENOM_TOLERANCE || wi.cos_theta() < DENOM_TOLERANCE {
+        if !wo.in_upper_hemisphere() || !wi.in_upper_hemisphere() {
             return Throughput::ZERO;
         }
+
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
@@ -108,7 +109,7 @@ impl Lobe for Metal {
     }
 
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
-        if wo.cos_theta() < DENOM_TOLERANCE {
+        if !wo.in_upper_hemisphere() {
             return None;
         }
 
@@ -146,7 +147,7 @@ impl Lobe for Metal {
     }
 
     fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
-        if wo.cos_theta() < DENOM_TOLERANCE || wi.cos_theta() < DENOM_TOLERANCE {
+        if !wo.in_upper_hemisphere() || !wi.in_upper_hemisphere() {
             return DENSITY_EPSILON;
         }
 

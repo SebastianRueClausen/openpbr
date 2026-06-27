@@ -18,8 +18,8 @@ use std::{f32::consts::PI, ops::Range};
 /// Test that the given lobe has some desired properties. In particular:
 /// - `lobe.sample` correctly samples the distribution of `density`.
 /// - `lobe.eval` follows Helmholtz reciprocity. That is, for any pair of vectors `view` and `light`,
-///   `lobe.eval(wi, wo) == bsdf.eval(wo, wi)`.
-/// - `bsdf.eval` is energy conserving, meaning that it integrates to at most 1 over the sphere.
+///   `lobe.eval(wi, wo) == lobe.eval(wo, wi)`.
+/// - `lobe.eval` is energy conserving, meaning that it integrates to at most 1 over the sphere.
 /// - There are no NaNs and infinites.
 pub struct LobeTest<'a, L> {
     pub lobe: &'a L,
@@ -152,7 +152,7 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
         let pval = self.chi_squared_test(&freqs, &expected_freqs);
         assert!(
             pval > significance_level,
-            "p-value is too small: {pval} <= {significance_level}, `bsdf.distribution` does not follow the distribution of `bsdf.density`"
+            "p-value is too small: {pval} <= {significance_level}, `lobe.sample` does not follow the distribution of `lobe.density`"
         );
 
         // Test Helmholtz reciprocity.
@@ -164,7 +164,7 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
             let b = self.lobe.eval(wi, wo);
             let error = throughput_error(&a, &b);
             for error in error.to_array().into_iter() {
-                assert!(error <= 1e-3, "bsdf is not reciprocal: {a:?} != {b:?}");
+                assert!(error <= 1e-3, "lobe is not reciprocal: {a:?} != {b:?}");
             }
         }
 
@@ -188,7 +188,7 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
             );
             assert!(
                 energy < 1.0 + 1e-3,
-                "bsdf does not conserve energy: {energy} (should be less than 1)"
+                "lobe does not conserve energy: {energy} (should be less than 1)"
             );
         }
     }

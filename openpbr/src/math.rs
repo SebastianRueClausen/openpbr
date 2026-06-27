@@ -83,6 +83,10 @@ pub trait SphericalCoordinates {
     fn in_same_hemisphere(&self, other: &Self) -> bool {
         self.cos_theta() * other.cos_theta() > 0.0
     }
+    fn in_upper_hemisphere(&self) -> bool {
+        self.cos_theta() > 0.0
+    }
+    fn flip_hemisphere(&self) -> Self;
 }
 
 impl SphericalCoordinates for Vec3 {
@@ -118,5 +122,9 @@ impl SphericalCoordinates for Vec3 {
         } else {
             (self.y / sin_theta).clamp(-1.0, 1.0)
         }
+    }
+
+    fn flip_hemisphere(&self) -> Self {
+        self.with_z(-self.z)
     }
 }

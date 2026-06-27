@@ -173,10 +173,9 @@ impl Lobe for SpecularReflection {
         let microfacet_normal = if wo_rotated.cos_theta() > 0.0 {
             microfacet.sample(wo_rotated, random.truncate())
         } else {
-            let wo_flipped = Vec3::new(wo_rotated.x, wo_rotated.y, -wo_rotated.z);
-            let mut n = microfacet.sample(wo_flipped, random.truncate());
-            n.z = -n.z;
-            n
+            microfacet
+                .sample(wo_rotated.flip_hemisphere(), random.truncate())
+                .flip_hemisphere()
         };
 
         let wi_rotated = -wo_rotated.reflect(microfacet_normal);
