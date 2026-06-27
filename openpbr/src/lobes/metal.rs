@@ -1,9 +1,9 @@
 use crate::{
-    consts::{DENOM_TOLERANCE, DENSITY_EPSILON},
+    consts::DENSITY_EPSILON,
     fresnel::schlick,
     material::Material,
     math::{LocalRotation, SphericalCoordinates},
-    microfacet::Microfacet,
+    microfacet::{self, Microfacet},
 };
 use glam::Vec3;
 use std::f32::consts::PI;
@@ -24,23 +24,13 @@ fn fresnel_metal(cos_theta: f32, f0: Vec3, tint: Vec3) -> Vec3 {
 fn brdf_and_density(
     microfacet: &Microfacet,
     microfacet_normal: Vec3,
-    wo_rotated: Vec3,
-    wi_rotated: Vec3,
     wo: Vec3,
     wi: Vec3,
     f0: Vec3,
     tint: Vec3,
 ) -> (Vec3, f32) {
-    let wo_dot_n = wo_rotated.dot(microfacet_normal);
-    let d = microfacet.distribution(microfacet_normal);
-    let visible_normals = d * microfacet.masking(wo_rotated) * wo_dot_n.max(0.0)
-        / wo_rotated.cos_theta().max(DENOM_TOLERANCE);
-    let jacobian = 1.0 / (4.0 * wo_dot_n).abs().max(DENOM_TOLERANCE);
-    let density = (visible_normals * jacobian).max(DENSITY_EPSILON);
-    let fresnel = fresnel_metal(wo_dot_n.abs(), f0, tint);
-    let brdf = fresnel * d * microfacet.visibility(wo_rotated, wi_rotated)
-        / (4.0 * wi.cos_theta().abs() * wo.cos_theta().abs()).max(DENOM_TOLERANCE);
-    (brdf, density)
+    let fresnel = fresnel_metal(wo.dot(microfacet_normal).abs(), f0, tint);
+    microfacet::torrance_sparrow(microfacet, wo, wi, microfacet_normal, fresnel)
 }
 
 pub struct Metal {
@@ -76,99 +66,70 @@ impl Metal {
 }
 
 impl Lobe for Metal {
-    fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        wi.in_upper_hemisphere()
+    fn wo_is_valid(&self, wo: Vec3) -> bool {
+        wo.is_in_upper_hemisphere()
     }
 
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
-        if !wo.in_upper_hemisphere() || !wi.in_upper_hemisphere() {
+        if !wo.is_in_upper_hemisphere() || !wi.is_in_upper_hemisphere() {
             return Throughput::ZERO;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wo_rotated = rotation.rotate(wo);
-        let wi_rotated = rotation.rotate(wi);
+        let wo = rotation.rotate(wo);
+        let wi = rotation.rotate(wi);
 
-        let microfacet_normal = (wo_rotated + wi_rotated).normalize();
+        let microfacet_normal = (wo + wi).normalize();
         let (f0, tint) = self.f0_tint();
 
-        let (brdf, _) = brdf_and_density(
-            &microfacet,
-            microfacet_normal,
-            wo_rotated,
-            wi_rotated,
-            wo,
-            wi,
-            f0,
-            tint,
-        );
+        let (brdf, _) = brdf_and_density(&microfacet, microfacet_normal, wo, wi, f0, tint);
 
         Throughput::from_specular(brdf)
     }
 
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
-        if !wo.in_upper_hemisphere() {
+        if !wo.is_in_upper_hemisphere() {
             return None;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wo_rotated = rotation.rotate(wo);
-        let microfacet_normal = microfacet.sample(wo_rotated, random.truncate());
-        let wi_rotated = -wo_rotated.reflect(microfacet_normal);
+        let wo = rotation.rotate(wo);
+        let microfacet_normal = microfacet.sample(wo, random.truncate());
+        let wi = -wo.reflect(microfacet_normal);
 
-        if !wo_rotated.in_same_hemisphere(&wi_rotated) {
+        if !wo.is_in_same_hemisphere(&wi) {
             return None;
         }
 
-        let wi = rotation.inverse_rotate(wi_rotated);
         let (f0, tint) = self.f0_tint();
-
-        let (brdf, density) = brdf_and_density(
-            &microfacet,
-            microfacet_normal,
-            wo_rotated,
-            wi_rotated,
-            wo,
-            wi,
-            f0,
-            tint,
-        );
+        let (brdf, density) = brdf_and_density(&microfacet, microfacet_normal, wo, wi, f0, tint);
 
         Some(Sample {
             lobe_type: LobeType::Metal,
             throughput: Throughput::from_specular(brdf),
+            wi: rotation.inverse_rotate(wi),
             density,
-            wi,
         })
     }
 
     fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
-        if !wo.in_upper_hemisphere() || !wi.in_upper_hemisphere() {
+        if !wo.is_in_upper_hemisphere() || !wi.is_in_upper_hemisphere() {
             return DENSITY_EPSILON;
         }
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
-        let wo_rotated = rotation.rotate(wo);
-        let wi_rotated = rotation.rotate(wi);
+        let wo = rotation.rotate(wo);
+        let wi = rotation.rotate(wi);
 
-        let microfacet_normal = (wo_rotated + wi_rotated).normalize();
+        let microfacet_normal = (wo + wi).normalize();
         let (f0, tint) = self.f0_tint();
-        let (_, density) = brdf_and_density(
-            &microfacet,
-            microfacet_normal,
-            wo_rotated,
-            wi_rotated,
-            wo,
-            wi,
-            f0,
-            tint,
-        );
+        let (_, density) = brdf_and_density(&microfacet, microfacet_normal, wo, wi, f0, tint);
 
         density
     }

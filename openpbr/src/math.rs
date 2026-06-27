@@ -80,10 +80,10 @@ pub trait SphericalCoordinates {
     fn tan_theta_squared(&self) -> f32 {
         self.sin_theta_squared() / self.cos_theta_squared()
     }
-    fn in_same_hemisphere(&self, other: &Self) -> bool {
+    fn is_in_same_hemisphere(&self, other: &Self) -> bool {
         self.cos_theta() * other.cos_theta() > 0.0
     }
-    fn in_upper_hemisphere(&self) -> bool {
+    fn is_in_upper_hemisphere(&self) -> bool {
         self.cos_theta() > 0.0
     }
     fn flip_hemisphere(&self) -> Self;

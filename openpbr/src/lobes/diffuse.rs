@@ -37,6 +37,11 @@ fn energy_compensated_oren_nayar(rho: Vec3, sigma: f32, wi: Vec3, wo: Vec3) -> V
             / f32::max(1e-7, 1.0 - average_albedo);
 }
 
+/// # The Diffuse Lobe
+///
+/// As by the OpenPBR specifications, this implements the energy-preserving Oren-Nayar model
+/// proposed in "EON: A practical energy-preserving rough diffuse BRDF" by Jamie Portsmouth,
+/// Peter Kutz and Stephen Hill (2024).
 pub struct Diffuse {
     pub weight: f32,
     pub color: Vec3,
@@ -54,12 +59,12 @@ impl From<&Material> for Diffuse {
 }
 
 impl Lobe for Diffuse {
-    fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        wi.in_upper_hemisphere()
+    fn wo_is_valid(&self, wi: Vec3) -> bool {
+        wi.is_in_upper_hemisphere()
     }
 
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
-        if !wi.in_upper_hemisphere() || !wo.in_upper_hemisphere() {
+        if !wi.is_in_upper_hemisphere() || !wo.is_in_upper_hemisphere() {
             return Throughput::ZERO;
         }
 
@@ -72,7 +77,7 @@ impl Lobe for Diffuse {
     }
 
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
-        if !wo.in_upper_hemisphere() {
+        if !wo.is_in_upper_hemisphere() {
             return None;
         }
 
@@ -89,7 +94,7 @@ impl Lobe for Diffuse {
     }
 
     fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
-        if !wo.in_upper_hemisphere() {
+        if !wo.is_in_upper_hemisphere() {
             return 0.0;
         }
 
@@ -97,7 +102,7 @@ impl Lobe for Diffuse {
     }
 
     fn estimate_directional_albedo(&self, wi: Vec3, _: &[Vec3]) -> Vec3 {
-        if !wi.in_upper_hemisphere() {
+        if !wi.is_in_upper_hemisphere() {
             return Vec3::ZERO;
         }
 

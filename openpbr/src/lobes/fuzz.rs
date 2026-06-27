@@ -1,18 +1,15 @@
-//! # Fuzz
-//!
-//! This is an implementation of the fuzz (also known as sheen) lobe.
-//!
-//! As recommended by the OpenPBR specification, and following the official reference
-//! implementation and the Adobe implementation, it's an implementation of the model proposed
-//! by the paper "Practical Multiple-Scattering Sheen Using Linearly Transformed Cosines"
-//! by Zeltner, Burley, and Chiang (2022).
-
 use crate::{material::Material, math::SphericalCoordinates, sampling};
 use glam::{Vec2, Vec3};
 use std::f32::consts::PI;
 
 use super::{Lobe, LobeType, Sample, Throughput};
 
+/// # The Fuzz Lobe
+///
+/// As recommended by the OpenPBR specification, and following the official reference
+/// implementation and the Adobe implementation, it's an implementation of the model proposed
+/// by the paper "Practical Multiple-Scattering Sheen Using Linearly Transformed Cosines"
+/// by Zeltner, Burley, and Chiang (2022).
 pub struct Fuzz {
     pub color: Vec3,
     pub roughness: f32,
@@ -37,12 +34,12 @@ fn phi(v: Vec3) -> f32 {
 }
 
 impl Lobe for Fuzz {
-    fn incidence_is_valid(&self, wi: Vec3) -> bool {
-        wi.in_upper_hemisphere()
+    fn wo_is_valid(&self, wo: Vec3) -> bool {
+        wo.is_in_upper_hemisphere()
     }
 
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
-        if !wi.in_upper_hemisphere() || !wo.in_upper_hemisphere() {
+        if !wi.is_in_upper_hemisphere() || !wo.is_in_upper_hemisphere() {
             return Throughput::ZERO;
         }
 
@@ -60,14 +57,14 @@ impl Lobe for Fuzz {
     }
 
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
-        if !wo.in_upper_hemisphere() {
+        if !wo.is_in_upper_hemisphere() {
             return None;
         }
 
         let wi = sample_ltc(ltc_coeffs(wo, self.roughness), random.truncate())
             .rotate_axis(Vec3::Z, phi(wo));
 
-        if !wi.in_same_hemisphere(&wo) {
+        if !wi.is_in_same_hemisphere(&wo) {
             return None;
         }
 
@@ -83,7 +80,7 @@ impl Lobe for Fuzz {
     }
 
     fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
-        if !wi.in_upper_hemisphere() || !wo.in_upper_hemisphere() {
+        if !wi.is_in_upper_hemisphere() || !wo.is_in_upper_hemisphere() {
             return 0.0;
         }
 

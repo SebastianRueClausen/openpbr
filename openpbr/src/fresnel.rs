@@ -1,7 +1,7 @@
 use glam::Vec3;
 
 /// Full unpolarized Fresnel reflectance for a dielectric interface.
-/// `eta` is the ratio n_t/n_i (transmitted over incident index of refraction).
+/// `ior` is the ratio n_t/n_i (transmitted over incident index of refraction).
 pub fn fresnel_dielectric(ior: f32, cos_theta_i: f32) -> f32 {
     let sin_theta_i_sq = 1.0 - cos_theta_i.powi(2);
     let sin_theta_t_sq = sin_theta_i_sq / ior.powi(2);

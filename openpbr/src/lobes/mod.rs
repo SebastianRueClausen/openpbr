@@ -65,10 +65,10 @@ pub trait Lobe {
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput;
     fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample>;
     fn density(&self, wo: Vec3, wi: Vec3) -> f32;
-    fn incidence_is_valid(&self, wo: Vec3) -> bool;
+    fn wo_is_valid(&self, wo: Vec3) -> bool;
 
     fn estimate_directional_albedo(&self, wo: Vec3, samples: &[Vec3]) -> Vec3 {
-        if !self.incidence_is_valid(wo) {
+        if !self.wo_is_valid(wo) {
             return Vec3::ZERO;
         }
 

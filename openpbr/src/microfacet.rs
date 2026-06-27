@@ -85,3 +85,21 @@ fn roughness_to_alpha(roughness: f32, anisotropy: f32) -> Vec2 {
     let alpha_y = (1.0 - anisotropy) * alpha_x;
     Vec2::new(alpha_x.max(1e-4), alpha_y.max(1e-4))
 }
+
+pub fn torrance_sparrow(
+    microfacet: &Microfacet,
+    wo: Vec3,
+    wi: Vec3,
+    microfacet_normal: Vec3,
+    fresnel: Vec3,
+) -> (Vec3, f32) {
+    let wo_dot_wm = wo.dot(microfacet_normal);
+    let d = microfacet.distribution(microfacet_normal);
+    let visible_normals =
+        d * microfacet.masking(wo) * wo_dot_wm.max(0.0) / wo.cos_theta().max(DENOM_TOLERANCE);
+    let jacobian = 1.0 / (4.0 * wo_dot_wm).abs().max(DENOM_TOLERANCE);
+    let density = visible_normals * jacobian;
+    let brdf = fresnel * d * microfacet.visibility(wo, wi)
+        / (4.0 * wi.cos_theta().abs() * wo.cos_theta().abs()).max(DENOM_TOLERANCE);
+    (brdf, density)
+}

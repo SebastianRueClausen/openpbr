@@ -8,9 +8,13 @@ use crate::{
 use glam::Vec3;
 
 use super::{
-    coat::Coat, diffuse::Diffuse, fuzz::Fuzz, metal::Metal,
-    specular_reflection::SpecularReflection, specular_transmission::SpecularTransmission, Lobe,
-    LobeType, PerLobe, Sample, Throughput,
+    coat::Coat,
+    diffuse::Diffuse,
+    fuzz::Fuzz,
+    metal::Metal,
+    specular_reflection::{self, SpecularReflection},
+    specular_transmission::SpecularTransmission,
+    Lobe, LobeType, PerLobe, Sample, Throughput,
 };
 
 pub struct Bsdf {
@@ -104,12 +108,7 @@ impl Bsdf {
         None
     }
 
-    fn eval_lobes(
-        &self,
-        wo: Vec3,
-        wi: Vec3,
-        skip: Option<LobeType>,
-    ) -> (PerLobe<f32>, Throughput) {
+    fn eval_lobes(&self, wo: Vec3, wi: Vec3, skip: Option<LobeType>) -> (PerLobe<f32>, Throughput) {
         let mut throughput = Throughput::ONE;
 
         macro_rules! eval {
@@ -216,8 +215,11 @@ fn compute_weights<S: Sampler>(
     let mut base_darkening = Vec3::ONE;
     if material.coat_weight > 0.0 && material.coat_darkening > 0.0 {
         // Adjusted specular IOR through the coat, OpenPBR Eq. (60).
-        let adjusted_ior =
-            material.specular_ior / (1.0 + material.coat_weight * (material.coat_ior - 1.0));
+        let adjusted_ior = specular_reflection::effective_specular_ior(
+            material.specular_ior,
+            material.coat_ior,
+            material.coat_weight,
+        );
 
         // OpenPBR Eq. (70), (69).
         let fresnel_weight = (material.specular_weight * f0_from_ior(adjusted_ior)).clamp(0.0, 1.0);
