@@ -5,13 +5,12 @@ use crate::{
     math::SphericalCoordinates,
     Sampler,
 };
-use enum_map::EnumMap;
 use glam::Vec3;
 
 use super::{
     coat::Coat, diffuse::Diffuse, fuzz::Fuzz, metal::Metal,
     specular_reflection::SpecularReflection, specular_transmission::SpecularTransmission, Lobe,
-    LobeType, Sample, Throughput,
+    LobeType, PerLobe, Sample, Throughput,
 };
 
 pub struct Bsdf {
@@ -21,8 +20,8 @@ pub struct Bsdf {
     spec_refl: SpecularReflection,
     spec_trans: SpecularTransmission,
     diffuse: Diffuse,
-    weights: EnumMap<LobeType, Vec3>,
-    probs: EnumMap<LobeType, f32>,
+    weights: PerLobe<Vec3>,
+    probs: PerLobe<f32>,
 }
 
 impl Bsdf {
@@ -73,7 +72,7 @@ impl Bsdf {
 
         let mut cumulative = 0.0f32;
 
-        for lobe in ALL_LOBES {
+        for lobe in &LobeType::ALL {
             cumulative += self.probs[*lobe];
             if random_lobe < cumulative {
                 let Some(Sample {
@@ -110,7 +109,7 @@ impl Bsdf {
         wo: Vec3,
         wi: Vec3,
         skip: Option<LobeType>,
-    ) -> (EnumMap<LobeType, f32>, Throughput) {
+    ) -> (PerLobe<f32>, Throughput) {
         let mut throughput = Throughput::ONE;
 
         macro_rules! eval {
@@ -126,14 +125,14 @@ impl Bsdf {
             };
         }
 
-        let densities = enum_map::enum_map! {
-            LobeType::Fuzz => eval!(LobeType::Fuzz, self.fuzz),
-            LobeType::Coat => eval!(LobeType::Coat, self.coat),
-            LobeType::Metal => eval!(LobeType::Metal, self.metal),
-            LobeType::SpecularReflection => eval!(LobeType::SpecularReflection, self.spec_refl),
-            LobeType::SpecularTransmission => eval!(LobeType::SpecularTransmission, self.spec_trans),
-            LobeType::Diffuse => eval!(LobeType::Diffuse, self.diffuse),
-        };
+        let densities = PerLobe::new([
+            eval!(LobeType::Fuzz, self.fuzz),
+            eval!(LobeType::Coat, self.coat),
+            eval!(LobeType::Metal, self.metal),
+            eval!(LobeType::SpecularReflection, self.spec_refl),
+            eval!(LobeType::SpecularTransmission, self.spec_trans),
+            eval!(LobeType::Diffuse, self.diffuse),
+        ]);
 
         (densities, throughput)
     }
@@ -150,7 +149,7 @@ impl Bsdf {
     }
 }
 
-fn total_density(probs: &EnumMap<LobeType, f32>, densities: &EnumMap<LobeType, f32>) -> f32 {
+fn total_density(probs: &PerLobe<f32>, densities: &PerLobe<f32>) -> f32 {
     probs
         .values()
         .zip(densities.values())
@@ -168,44 +167,44 @@ fn compute_weights<S: Sampler>(
     spec_refl: &SpecularReflection,
     spec_trans: &SpecularTransmission,
     diffuse: &Diffuse,
-) -> (EnumMap<LobeType, Vec3>, EnumMap<LobeType, f32>) {
+) -> (PerLobe<Vec3>, PerLobe<f32>) {
     let fully_metallic = material.base_metalness == 1.0;
     let fully_transmissive = material.transmission_weight == 1.0;
 
-    let albedos = enum_map::enum_map! {
-        LobeType::Fuzz => if material.fuzz_weight > 0.0 {
+    let albedos = PerLobe::new([
+        if material.fuzz_weight > 0.0 {
             fuzz.estimate_directional_albedo(wo, &[rng.next_vec3()])
         } else {
             Vec3::ZERO
         },
-        LobeType::Coat => if material.coat_weight > 0.0 {
+        if material.coat_weight > 0.0 {
             coat.estimate_directional_albedo(wo, &[rng.next_vec3()])
         } else {
             Vec3::ZERO
         },
-        LobeType::Metal => if material.base_metalness > 0.0 {
+        if material.base_metalness > 0.0 {
             metal.estimate_directional_albedo(wo, &[rng.next_vec3()])
         } else {
             Vec3::ZERO
         },
-        LobeType::SpecularReflection => if !fully_metallic {
+        if !fully_metallic {
             spec_refl.estimate_directional_albedo(wo, &[rng.next_vec3()])
         } else {
             Vec3::ZERO
         },
-        LobeType::SpecularTransmission => if !fully_metallic && material.transmission_weight > 0.0 {
+        if !fully_metallic && material.transmission_weight > 0.0 {
             spec_trans.estimate_directional_albedo(wo, &[rng.next_vec3()])
         } else {
             Vec3::ZERO
         },
-        LobeType::Diffuse => if !fully_metallic && !fully_transmissive {
+        if !fully_metallic && !fully_transmissive {
             diffuse.estimate_directional_albedo(wo, &[rng.next_vec3()])
         } else {
             Vec3::ZERO
         },
-    };
+    ]);
 
-    let mut weights: EnumMap<LobeType, Vec3> = EnumMap::from_fn(|_| Vec3::ZERO);
+    let mut weights: PerLobe<Vec3> = PerLobe::from_fn(|_| Vec3::ZERO);
 
     // OpenPBR Eq. (81): fuzz attenuates everything below it.
     weights[LobeType::Fuzz] = Vec3::splat(material.fuzz_weight);
@@ -271,7 +270,7 @@ fn compute_weights<S: Sampler>(
         opaque_dielectric * (Vec3::ONE - albedos[LobeType::SpecularReflection]);
 
     // Normalize weights into sampling probabilities.
-    let mut probs = EnumMap::from_fn(|i| (weights[i] * albedos[i]).length());
+    let mut probs = PerLobe::from_fn(|i| (weights[i] * albedos[i]).length());
     let total = probs.values().sum::<f32>().max(DENOM_TOLERANCE);
 
     for p in probs.values_mut() {
@@ -280,12 +279,3 @@ fn compute_weights<S: Sampler>(
 
     (weights, probs)
 }
-
-const ALL_LOBES: &[LobeType] = &[
-    LobeType::Fuzz,
-    LobeType::Coat,
-    LobeType::Metal,
-    LobeType::SpecularReflection,
-    LobeType::SpecularTransmission,
-    LobeType::Diffuse,
-];

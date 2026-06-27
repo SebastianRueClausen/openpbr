@@ -7,7 +7,6 @@ edition = "2024"
 rand = ["dep:rand"]
 
 [dependencies]
-enum-map = "2.7.3"
 glam = "0.32.1"
 rand = { version = "0.10", optional = true }
 
