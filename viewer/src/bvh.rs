@@ -54,8 +54,8 @@ impl Triangle {
         self.positions.iter().sum::<Vec3>() / 3.0
     }
 
-    // Möller–Trumbore intersection. Returns `t` along the ray, or `None` on miss.
-    fn intersect(&self, ray: &Ray) -> Option<f32> {
+    // Möller–Trumbore intersection. Returns `(t, u, v)` along the ray, or `None` on miss.
+    fn intersect(&self, ray: &Ray) -> Option<(f32, f32, f32)> {
         let e1 = self.positions[1] - self.positions[0];
         let e2 = self.positions[2] - self.positions[0];
         let h = ray.direction.cross(e2);
@@ -81,7 +81,7 @@ impl Triangle {
         }
 
         let t = inv_det * e2.dot(q);
-        (t > f32::EPSILON).then_some(t)
+        (t > f32::EPSILON).then_some((t, u, v))
     }
 }
 
@@ -104,6 +104,9 @@ pub struct Ray {
 pub struct Hit {
     /// Distance along the ray.
     pub t: f32,
+    /// Barycentric coordinates of the hit point (w = 1 - u - v).
+    pub u: f32,
+    pub v: f32,
     /// Index of the triangle in the original positions slice passed to `Bvh::new`.
     pub index: usize,
 }
@@ -157,9 +160,9 @@ impl Bvh {
                 }
                 Node::Leaf { triangles } => {
                     for tri in &self.triangles[triangles.start..triangles.end] {
-                        if let Some(t) = tri.intersect(ray) && t < t_max {
+                        if let Some((t, u, v)) = tri.intersect(ray) && t < t_max {
                             t_max = t;
-                            best = Some(Hit { t, index: tri.index });
+                            best = Some(Hit { t, u, v, index: tri.index });
                         }
                     }
                 }

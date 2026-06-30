@@ -29,7 +29,7 @@ pub struct Bsdf {
 }
 
 impl Bsdf {
-    /// Build lobes and compute sampling weights from `material` for incident direction `wi`.
+    /// Build lobes and compute sampling weights from `material` for incident direction `wo`.
     /// One sample per active lobe is drawn from `rng` for directional-albedo estimation.
     pub fn new<S: Sampler>(material: &Material, wo: Vec3, rng: &mut S) -> Self {
         let fuzz = Fuzz::from(material);

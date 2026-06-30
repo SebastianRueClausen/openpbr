@@ -11,6 +11,6 @@ pub trait Sampler {
 #[cfg(feature = "rand")]
 impl<R: rand::Rng> Sampler for R {
     fn next_f32(&mut self) -> f32 {
-        self.random::<f32>()
+        rand::RngExt::random::<f32>(self)
     }
 }

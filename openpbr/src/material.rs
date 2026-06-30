@@ -1,5 +1,6 @@
 use glam::Vec3;
 
+#[derive(Debug, Clone)]
 pub struct Material {
     pub base_weight: f32,
     pub base_color: Vec3,

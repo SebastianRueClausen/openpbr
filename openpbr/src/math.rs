@@ -60,6 +60,14 @@ impl SurfaceBasis {
     pub fn transform(&self, local: Vec3) -> Vec3 {
         (self.tangent * local.x + self.bitangent * local.y + self.normal * local.z).normalize()
     }
+
+    pub fn inverse_transform(&self, world: Vec3) -> Vec3 {
+        Vec3::new(
+            world.dot(self.tangent),
+            world.dot(self.bitangent),
+            world.dot(self.normal),
+        )
+    }
 }
 
 pub trait SphericalCoordinates {

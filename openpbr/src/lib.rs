@@ -4,8 +4,9 @@ pub mod lobes;
 pub mod material;
 pub mod math;
 mod microfacet;
-mod sampling;
 pub mod sampler;
+mod sampling;
 
-pub use sampler::Sampler;
+pub use lobes::bsdf::Bsdf;
 pub use material::Material;
+pub use sampler::Sampler;

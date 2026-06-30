@@ -4,18 +4,21 @@ mod path_tracer;
 use crate::bvh::Bvh;
 
 use eframe::{
+    egui,
     egui_wgpu::wgpu::util::DeviceExt as _,
     egui_wgpu::{self, wgpu},
-    egui,
 };
 use egui_file_dialog::FileDialog;
+use glam::{Mat4, Vec3};
 use obj::{load_obj, Obj};
-use glam::{Vec3, Mat4};
 
 use std::path::PathBuf;
-use std::io::BufReader;
-use std::fs::File;
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, Mutex};
+use std::{
+    fs::File,
+    thread::{self, Thread},
+};
+use std::{io::BufReader, thread::JoinHandle};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -186,9 +189,7 @@ impl Model {
         let positions: Vec<Vec3> = obj
             .indices
             .iter()
-            .map(|index| {
-                Vec3::from_array(obj.vertices[*index as usize].position)
-            })
+            .map(|index| Vec3::from_array(obj.vertices[*index as usize].position))
             .collect();
         let bvh = Bvh::new(&positions);
 
@@ -203,7 +204,13 @@ impl Model {
         let center = (min + max) * 0.5;
         let radius = (max - center).length().max(f32::MIN_POSITIVE);
 
-        Self { path, bvh, obj, center, radius }
+        Self {
+            path,
+            bvh,
+            obj,
+            center,
+            radius,
+        }
     }
 }
 
@@ -262,11 +269,56 @@ impl egui_wgpu::CallbackTrait for ModelCallback {
     }
 }
 
+#[derive(Clone, Default)]
+struct Progress {
+    progress: Arc<Mutex<f32>>,
+}
+
+impl Progress {
+    fn set(&self, progress: f32) {
+        let Ok(mut value) = self.progress.as_ref().lock() else {
+            return;
+        };
+        *value = progress;
+    }
+
+    fn get(&self) -> Option<f32> {
+        self.progress.as_ref().lock().ok().map(|v| *v)
+    }
+}
+
+enum RenderContent {
+    InProgress {
+        progress: Progress,
+        result: JoinHandle<Vec<Vec3>>,
+    },
+    Done {
+        raw: Vec<Vec3>,
+        image: (),
+    },
+}
+
+struct Render {
+    content: RenderContent,
+    config: path_tracer::Config,
+    material: openpbr::Material,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Window {
+    Preview,
+    Render(usize),
+}
+
 struct Viewer {
     file_dialog: FileDialog,
     error: Option<String>,
     model: Option<Arc<Model>>,
     material: openpbr::Material,
+    config: path_tracer::Config,
+    renders: Vec<Render>,
+    window: Window,
+
     /// Orbit camera angles in radians, driven by dragging the preview.
     yaw: f32,
     pitch: f32,
@@ -285,25 +337,27 @@ impl Viewer {
             .callback_resources
             .insert(preview);
 
+        let config = path_tracer::Config {
+            width: 512,
+            height: 512,
+            samples: 16,
+            bounces: 4,
+        };
+
         Self {
             file_dialog: FileDialog::new(),
             material: openpbr::Material::default(),
+            renders: Vec::new(),
+            window: Window::Preview,
             error: None,
             model: None,
+            config,
             yaw: 0.6,
             pitch: 0.4,
         }
     }
 
-    fn show_preview(&mut self, ui: &mut egui::Ui, model: &Arc<Model>) {
-        let (rect, response) =
-            ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
-
-        let drag = response.drag_delta();
-        self.yaw += drag.x * 0.01;
-        self.pitch = (self.pitch + drag.y * 0.01)
-            .clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
-
+    fn camera(&self, model: &Model, width: f32, height: f32) -> path_tracer::Camera {
         let fov = 45f32.to_radians();
         let distance = model.radius / (fov * 0.5).sin() * 1.2;
         let direction = Vec3::new(
@@ -311,17 +365,40 @@ impl Viewer {
             self.pitch.sin(),
             self.yaw.sin() * self.pitch.cos(),
         );
-        let eye = model.center + direction * distance;
+        let position = model.center + direction * distance;
 
-        let view = Mat4::look_at_rh(eye, model.center, Vec3::Y);
-        let aspect = (rect.width() / rect.height()).max(f32::MIN_POSITIVE);
+        let view = Mat4::look_at_rh(position, model.center, Vec3::Y);
+        let aspect = (width / height).max(f32::MIN_POSITIVE);
         let near = (distance - model.radius).max(distance * 0.01);
         let far = distance + model.radius;
         let proj = Mat4::perspective_rh(fov, aspect, near, far);
 
+        path_tracer::Camera {
+            view,
+            proj,
+            position,
+        }
+    }
+
+    fn show_preview(&mut self, ui: &mut egui::Ui, model: &Arc<Model>) {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
+
+        let drag = response.drag_delta();
+        self.yaw += drag.x * 0.01;
+        self.pitch = (self.pitch + drag.y * 0.01).clamp(
+            -std::f32::consts::FRAC_PI_2 + 0.01,
+            std::f32::consts::FRAC_PI_2 - 0.01,
+        );
+
+        let camera = self.camera(&model, rect.width(), rect.height());
+
         ui.painter().add(egui_wgpu::Callback::new_paint_callback(
             rect,
-            ModelCallback { model: Arc::clone(model), proj, view },
+            ModelCallback {
+                model: Arc::clone(model),
+                proj: camera.proj,
+                view: camera.view,
+            },
         ));
     }
 }
@@ -345,6 +422,10 @@ fn main() -> eframe::Result {
 impl eframe::App for Viewer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::left("control_panel").show(ui, |ui| {
+            let spacing = 10.0;
+
+            ui.add_space(spacing);
+
             if ui.button("Load Object").clicked() {
                 self.error = None;
                 self.file_dialog.pick_file();
@@ -367,7 +448,9 @@ impl eframe::App for Viewer {
                 ui.label(format!("Failed to load obj: {error}"));
             }
 
+            ui.add_space(spacing);
             ui.separator();
+            ui.add_space(spacing);
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let m = &mut self.material;
@@ -380,7 +463,10 @@ impl eframe::App for Viewer {
                         ui.label("Color");
                         m.base_color = Vec3::from_array(c);
                     });
-                    ui.add(egui::Slider::new(&mut m.base_diffuse_roughness, 0.0..=1.0).text("Diffuse Roughness"));
+                    ui.add(
+                        egui::Slider::new(&mut m.base_diffuse_roughness, 0.0..=1.0)
+                            .text("Diffuse Roughness"),
+                    );
                     ui.add(egui::Slider::new(&mut m.base_metalness, 0.0..=1.0).text("Metalness"));
                 });
 
@@ -393,8 +479,13 @@ impl eframe::App for Viewer {
                         m.specular_color = Vec3::from_array(c);
                     });
                     ui.add(egui::Slider::new(&mut m.specular_ior, 1.0..=3.0).text("IOR"));
-                    ui.add(egui::Slider::new(&mut m.specular_roughness, 0.0..=1.0).text("Roughness"));
-                    ui.add(egui::Slider::new(&mut m.specular_roughness_anisotropy, 0.0..=1.0).text("Anisotropy"));
+                    ui.add(
+                        egui::Slider::new(&mut m.specular_roughness, 0.0..=1.0).text("Roughness"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut m.specular_roughness_anisotropy, 0.0..=1.0)
+                            .text("Anisotropy"),
+                    );
                     ui.add(egui::Slider::new(&mut m.specular_rotation, 0.0..=1.0).text("Rotation"));
                 });
 
@@ -419,7 +510,10 @@ impl eframe::App for Viewer {
                     });
                     ui.add(egui::Slider::new(&mut m.coat_ior, 1.0..=3.0).text("IOR"));
                     ui.add(egui::Slider::new(&mut m.coat_roughness, 0.0..=1.0).text("Roughness"));
-                    ui.add(egui::Slider::new(&mut m.coat_roughness_anisotropy, 0.0..=1.0).text("Anisotropy"));
+                    ui.add(
+                        egui::Slider::new(&mut m.coat_roughness_anisotropy, 0.0..=1.0)
+                            .text("Anisotropy"),
+                    );
                     ui.add(egui::Slider::new(&mut m.coat_rotation, 0.0..=1.0).text("Rotation"));
                     ui.add(egui::Slider::new(&mut m.coat_darkening, 0.0..=1.0).text("Darkening"));
                 });
@@ -435,20 +529,95 @@ impl eframe::App for Viewer {
                     ui.add(egui::Slider::new(&mut m.fuzz_roughness, 0.0..=1.0).text("Roughness"));
                 });
 
+                ui.add_space(spacing);
                 ui.separator();
+                ui.add_space(spacing);
+
+                ui.collapsing("Render Settings", |ui| {
+                    let c = &mut self.config;
+                    ui.add(egui::Slider::new(&mut c.width, 64..=2048).text("Width"));
+                    ui.add(egui::Slider::new(&mut c.height, 64..=2048).text("Height"));
+                    ui.add(egui::Slider::new(&mut c.samples, 1..=256).text("Samples"));
+                    ui.add(egui::Slider::new(&mut c.bounces, 1..=16).text("Bounces"));
+                });
+
+                ui.add_space(spacing);
 
                 if ui.button("Render").clicked() {
-                    todo!();
+                    if let Some(model) = self.model.clone() {
+                        let progress = Progress::default();
+
+                        let config = self.config.clone();
+                        let material = self.material.clone();
+
+                        let camera = self.camera(&model, config.width as f32, config.height as f32);
+
+                        self.renders.push(Render {
+                            config: config.clone(),
+                            material: material.clone(),
+                            content: RenderContent::InProgress {
+                                progress: progress.clone(),
+                                result: thread::spawn(move || {
+                                    path_tracer::path_trace(
+                                        config, camera, model, material, progress,
+                                    )
+                                }),
+                            },
+                        });
+                    }
+                };
+            });
+        });
+
+        egui::Panel::top("top_bar").show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.visuals_mut().button_frame = false;
+
+                if ui
+                    .selectable_label(self.window == Window::Preview, "Preview")
+                    .clicked()
+                {
+                    self.window = Window::Preview;
+                }
+
+                for (index, _) in self.renders.iter().enumerate() {
+                    if ui
+                        .selectable_label(
+                            self.window == Window::Render(index),
+                            format!("Render {index}"),
+                        )
+                        .clicked()
+                    {
+                        self.window = Window::Render(index);
+                    }
                 }
             });
         });
 
-        if let Some(model) = self.model.clone() {
-            self.show_preview(ui, &model);
-        } else {
-            ui.centered_and_justified(|ui| {
-                ui.label("Load an object to preview it.");
-            });
+        match self.window {
+            Window::Preview => {
+                if let Some(model) = self.model.clone() {
+                    self.show_preview(ui, &model);
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.label("Load an object to preview it.");
+                    });
+                }
+            }
+            Window::Render(index) => {
+                let render = &self.renders[index];
+
+                match &render.content {
+                    RenderContent::InProgress { progress, .. } => {
+                        if let Some(progress) = progress.get() {
+                            ui.centered_and_justified(|ui| {
+                                ui.heading(format!("{:.0}%", progress * 100.0));
+                            });
+                        }
+                    }
+                    RenderContent::Done { raw, image } => todo!(),
+                }
+            }
         }
     }
 }
