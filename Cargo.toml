@@ -1,3 +1,8 @@
 [workspace]
-members = ["openpbr", "openpbr-oracle"]
+members = ["openpbr", "openpbr-oracle", "viewer"]
 resolver = "2"
+
+[workspace.dependencies]
+glam = "0.32.1"
+rand = "0.10"
+openpbr = { path = "openpbr" }

@@ -7,12 +7,12 @@ edition = "2024"
 rand = ["dep:rand"]
 
 [dependencies]
-glam = "0.32.1"
-rand = { version = "0.10", optional = true }
+glam.workspace = true
+rand = { workspace = true, optional = true }
 
 [dev-dependencies]
 openpbr-oracle = { path = "../openpbr-oracle" }
 integrate = "0.3.1"
 statrs = "0.18.0"
-rand = "0.10"
+rand.workspace = true
 glam = { version = "0.32.1", features = ["rand"] }

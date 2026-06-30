@@ -6,4 +6,6 @@ pub mod math;
 mod microfacet;
 mod sampling;
 pub mod sampler;
+
 pub use sampler::Sampler;
+pub use material::Material;
