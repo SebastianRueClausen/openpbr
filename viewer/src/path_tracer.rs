@@ -6,6 +6,13 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use openpbr::{math::SurfaceBasis, Bsdf, Material};
 use rand::RngExt;
 
+pub struct DirectionalLight {
+    /// Normalized direction pointing *toward* the light in world space.
+    pub direction: Vec3,
+    /// Emitted radiance.
+    pub radiance: Vec3,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub width: usize,
@@ -49,7 +56,7 @@ fn sample_ndc(x: u32, y: u32, config: &Config, rng: &mut impl rand::Rng) -> Vec2
 }
 
 fn camera_ray(ndc: Vec2, camera: &Camera, constants: &Constants) -> Ray {
-    let view_space_point = constants.inverse_proj * Vec4::new(-ndc.x, -ndc.y, 1.0, 1.0);
+    let view_space_point = constants.inverse_proj * Vec4::new(ndc.x, -ndc.y, 1.0, 1.0);
     let direction = (constants.inverse_view * view_space_point.with_w(0.0))
         .truncate()
         .normalize();
@@ -63,19 +70,25 @@ fn next_bounce(
     path_state: &mut PathState,
     model: &Model,
     material: &Material,
+    light: &DirectionalLight,
     rng: &mut impl rand::Rng,
 ) -> bool {
     let Some(hit) = model.bvh.hit(&path_state.ray) else {
+        path_state.accumulated += path_state.throughput;
         return false;
     };
 
-    let index = model.obj.indices[hit.index];
+    let base_index = hit.index * 3;
 
-    let v1 = model.obj.vertices[index as usize];
-    let v2 = model.obj.vertices[index as usize + 1];
-    let v3 = model.obj.vertices[index as usize + 2];
+    let i1 = model.obj.indices[base_index + 0] as usize;
+    let i2 = model.obj.indices[base_index + 1] as usize;
+    let i3 = model.obj.indices[base_index + 2] as usize;
 
-    let barycentric = Vec3::new(hit.u, hit.v, 1.0 - hit.u - hit.v);
+    let v1 = model.obj.vertices[i1];
+    let v2 = model.obj.vertices[i2];
+    let v3 = model.obj.vertices[i3];
+
+    let barycentric = Vec3::new(1.0 - hit.u - hit.v, hit.u, hit.v);
 
     let position = Vec3::from(v1.position) * barycentric.x
         + Vec3::from(v2.position) * barycentric.y
@@ -90,13 +103,30 @@ fn next_bounce(
     let wo = basis.inverse_transform(-path_state.ray.direction);
 
     let bsdf = Bsdf::new(material, wo, rng);
+
+    /*
+    let wi_light = basis.inverse_transform(light.direction);
+    if wi_light.z > 0.0 {
+        let shadow_ray = Ray {
+            origin: position + normal * 1e-4,
+            direction: light.direction,
+        };
+        if model.bvh.hit(&shadow_ray).is_none() {
+            let (direct, _) = bsdf.eval(wo, wi_light);
+            let nee = direct.total() * wi_light.z * light.radiance;
+            path_state.accumulated += path_state.throughput * nee;
+        }
+    }
+    */
+
     let Some(sample) = bsdf.sample(wo, rng) else {
         return false;
     };
 
     let wi_world = basis.transform(sample.wi);
-    let contrib = (sample.throughput.diffuse + sample.throughput.specular) / sample.density;
-    path_state.throughput *= contrib;
+
+    path_state.throughput *=
+        (sample.throughput.diffuse + sample.throughput.specular) / sample.density;
     path_state.ray = Ray {
         origin: position + normal * 1e-4,
         direction: wi_world,
@@ -113,6 +143,7 @@ fn integrate_pixel(
     camera: &Camera,
     model: &Model,
     material: &Material,
+    light: &DirectionalLight,
     rng: &mut impl rand::Rng,
 ) -> Vec3 {
     let mut accumulated = Vec3::ZERO;
@@ -126,7 +157,7 @@ fn integrate_pixel(
         };
 
         for _ in 0..config.bounces {
-            if !next_bounce(&mut path_state, model, material, rng) {
+            if !next_bounce(&mut path_state, model, material, light, rng) {
                 break;
             }
         }
@@ -142,6 +173,7 @@ pub fn path_trace(
     camera: Camera,
     model: Arc<Model>,
     material: Material,
+    light: DirectionalLight,
     progress: Progress,
 ) -> Vec<Vec3> {
     let constants = Constants::new(&camera);
@@ -154,7 +186,8 @@ pub fn path_trace(
         for x in 0..config.width {
             let offset = y * config.width + x;
             output[offset] = integrate_pixel(
-                x as u32, y as u32, &config, &constants, &camera, &model, &material, &mut rng,
+                x as u32, y as u32, &config, &constants, &camera, &model, &material, &light,
+                &mut rng,
             );
 
             progress.set(offset as f32 / size as f32);

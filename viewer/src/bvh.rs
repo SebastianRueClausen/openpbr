@@ -138,10 +138,6 @@ impl Bvh {
         bvh
     }
 
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
     pub fn hit(&self, ray: &Ray) -> Option<Hit> {
         if self.nodes.is_empty() {
             return None;

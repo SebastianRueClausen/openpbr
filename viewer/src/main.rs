@@ -13,12 +13,18 @@ use glam::{Mat4, Vec3};
 use obj::{load_obj, Obj};
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::{
-    fs::File,
-    thread::{self, Thread},
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
 };
+use std::{fs::File, thread};
 use std::{io::BufReader, thread::JoinHandle};
+
+static TEXTURE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn light_direction() -> Vec3 {
+    Vec3::new(0.4, 1.0, 0.3).normalize()
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -32,6 +38,8 @@ struct Vertex {
 struct Uniforms {
     view: [f32; 16],
     proj: [f32; 16],
+    /// Light direction in view space. 4th element is padding to satisfy vec3 alignment.
+    light_dir_view: [f32; 4],
 }
 
 struct ModelGeometry {
@@ -231,9 +239,13 @@ impl egui_wgpu::CallbackTrait for ModelCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         let preview: &Preview = resources.get().unwrap();
 
+        let light_dir_view = (self.view * light_direction().extend(0.0))
+            .truncate()
+            .normalize();
         let uniforms = Uniforms {
             view: self.view.to_cols_array(),
             proj: self.proj.to_cols_array(),
+            light_dir_view: light_dir_view.extend(0.0).into(),
         };
         queue.write_buffer(&preview.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
@@ -294,7 +306,7 @@ enum RenderContent {
     },
     Done {
         raw: Vec<Vec3>,
-        image: (),
+        image: Option<egui::TextureHandle>,
     },
 }
 
@@ -380,6 +392,38 @@ impl Viewer {
         }
     }
 
+    fn poll_renders(&mut self, ctx: &egui::Context) {
+        let mut any_in_progress = false;
+        for render in &mut self.renders {
+            match &render.content {
+                RenderContent::InProgress { result, .. } if result.is_finished() => {}
+                RenderContent::InProgress { .. } => {
+                    any_in_progress = true;
+                    continue;
+                }
+                RenderContent::Done { .. } => continue,
+            }
+            let old = std::mem::replace(
+                &mut render.content,
+                RenderContent::Done {
+                    raw: Vec::new(),
+                    image: None,
+                },
+            );
+            if let RenderContent::InProgress { result, .. } = old {
+                let raw = result.join().unwrap_or_default();
+                let image = tonemap_to_texture(ctx, &raw, &render.config);
+                render.content = RenderContent::Done {
+                    raw,
+                    image: Some(image),
+                };
+            }
+        }
+        if any_in_progress {
+            ctx.request_repaint();
+        }
+    }
+
     fn show_preview(&mut self, ui: &mut egui::Ui, model: &Arc<Model>) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::drag());
 
@@ -403,11 +447,102 @@ impl Viewer {
     }
 }
 
+fn tonemap_to_texture(
+    ctx: &egui::Context,
+    raw: &[Vec3],
+    config: &path_tracer::Config,
+) -> egui::TextureHandle {
+    let pixels: Vec<u8> = raw
+        .iter()
+        .flat_map(|&color| {
+            // Reinhard tone mapping then gamma correction.
+            let mapped = color / (color + Vec3::ONE);
+            let gamma = Vec3::new(
+                mapped.x.powf(1.0 / 2.2),
+                mapped.y.powf(1.0 / 2.2),
+                mapped.z.powf(1.0 / 2.2),
+            );
+            let r = (gamma.x.clamp(0.0, 1.0) * 255.0) as u8;
+            let g = (gamma.y.clamp(0.0, 1.0) * 255.0) as u8;
+            let b = (gamma.z.clamp(0.0, 1.0) * 255.0) as u8;
+            [r, g, b, 255u8]
+        })
+        .collect();
+
+    let color_image =
+        egui::ColorImage::from_rgba_unmultiplied([config.width, config.height], &pixels);
+
+    let id = TEXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    ctx.load_texture(
+        format!("render_{id}"),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    )
+}
+
+fn show_material_info(ui: &mut egui::Ui, m: &openpbr::Material) {
+    let color_label = |ui: &mut egui::Ui, label: &str, c: Vec3| {
+        ui.horizontal(|ui| {
+            let color = egui::Color32::from_rgb(
+                (c.x.clamp(0.0, 1.0) * 255.0) as u8,
+                (c.y.clamp(0.0, 1.0) * 255.0) as u8,
+                (c.z.clamp(0.0, 1.0) * 255.0) as u8,
+            );
+            ui.label(egui::RichText::new("■").color(color));
+            ui.label(format!("{label}: ({:.2}, {:.2}, {:.2})", c.x, c.y, c.z));
+        });
+    };
+
+    ui.collapsing("Base", |ui| {
+        ui.label(format!("Weight: {:.2}", m.base_weight));
+        color_label(ui, "Color", m.base_color);
+        ui.label(format!(
+            "Diffuse Roughness: {:.2}",
+            m.base_diffuse_roughness
+        ));
+        ui.label(format!("Metalness: {:.2}", m.base_metalness));
+    });
+
+    ui.collapsing("Specular", |ui| {
+        ui.label(format!("Weight: {:.2}", m.specular_weight));
+        color_label(ui, "Color", m.specular_color);
+        ui.label(format!("IOR: {:.2}", m.specular_ior));
+        ui.label(format!("Roughness: {:.2}", m.specular_roughness));
+        ui.label(format!(
+            "Anisotropy: {:.2}",
+            m.specular_roughness_anisotropy
+        ));
+        ui.label(format!("Rotation: {:.2}", m.specular_rotation));
+    });
+
+    ui.collapsing("Transmission", |ui| {
+        ui.label(format!("Weight: {:.2}", m.transmission_weight));
+        color_label(ui, "Color", m.transmission_color);
+        ui.label(format!("Depth: {:.2}", m.transmission_depth));
+    });
+
+    ui.collapsing("Coat", |ui| {
+        ui.label(format!("Weight: {:.2}", m.coat_weight));
+        color_label(ui, "Color", m.coat_color);
+        ui.label(format!("IOR: {:.2}", m.coat_ior));
+        ui.label(format!("Roughness: {:.2}", m.coat_roughness));
+        ui.label(format!("Anisotropy: {:.2}", m.coat_roughness_anisotropy));
+        ui.label(format!("Rotation: {:.2}", m.coat_rotation));
+        ui.label(format!("Darkening: {:.2}", m.coat_darkening));
+    });
+
+    ui.collapsing("Fuzz", |ui| {
+        ui.label(format!("Weight: {:.2}", m.fuzz_weight));
+        color_label(ui, "Color", m.fuzz_color);
+        ui.label(format!("Roughness: {:.2}", m.fuzz_roughness));
+    });
+}
+
 fn main() -> eframe::Result {
     env_logger::init();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 1024.0]),
         depth_buffer: 32,
         ..Default::default()
     };
@@ -421,6 +556,8 @@ fn main() -> eframe::Result {
 
 impl eframe::App for Viewer {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_renders(ui.ctx());
+
         egui::Panel::left("control_panel").show(ui, |ui| {
             let spacing = 10.0;
 
@@ -552,6 +689,11 @@ impl eframe::App for Viewer {
 
                         let camera = self.camera(&model, config.width as f32, config.height as f32);
 
+                        let light = path_tracer::DirectionalLight {
+                            direction: light_direction(),
+                            radiance: Vec3::splat(0.5),
+                        };
+
                         self.renders.push(Render {
                             config: config.clone(),
                             material: material.clone(),
@@ -559,7 +701,7 @@ impl eframe::App for Viewer {
                                 progress: progress.clone(),
                                 result: thread::spawn(move || {
                                     path_tracer::path_trace(
-                                        config, camera, model, material, progress,
+                                        config, camera, model, material, light, progress,
                                     )
                                 }),
                             },
@@ -605,9 +747,23 @@ impl eframe::App for Viewer {
                 }
             }
             Window::Render(index) => {
-                let render = &self.renders[index];
+                egui::Panel::right("render_info")
+                    .resizable(true)
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let render = &self.renders[index];
+                            let c = &render.config;
+                            ui.heading("Render Settings");
+                            ui.label(format!("Size: {}×{}", c.width, c.height));
+                            ui.label(format!("Samples: {}", c.samples));
+                            ui.label(format!("Bounces: {}", c.bounces));
+                            ui.separator();
+                            ui.heading("Material");
+                            show_material_info(ui, &render.material);
+                        });
+                    });
 
-                match &render.content {
+                match &self.renders[index].content {
                     RenderContent::InProgress { progress, .. } => {
                         if let Some(progress) = progress.get() {
                             ui.centered_and_justified(|ui| {
@@ -615,7 +771,26 @@ impl eframe::App for Viewer {
                             });
                         }
                     }
-                    RenderContent::Done { raw, image } => todo!(),
+                    RenderContent::Done { image, .. } => {
+                        if let Some(texture) = image {
+                            let available = ui.available_size();
+                            let tex_size = texture.size_vec2();
+                            let scale = (available.x / tex_size.x).min(available.y / tex_size.y);
+                            let display_size = tex_size * scale;
+                            let (rect, _) = ui.allocate_exact_size(available, egui::Sense::hover());
+                            let image_rect =
+                                egui::Rect::from_center_size(rect.center(), display_size);
+                            ui.painter().image(
+                                texture.id(),
+                                image_rect,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -626,6 +801,7 @@ const SHADER: &str = r#"
 struct Uniforms {
     view: mat4x4<f32>,
     proj: mat4x4<f32>,
+    light_dir_view: vec3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -664,8 +840,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         normal = -normal;
     }
 
-    let light = normalize(-in.view_position);
-    let half = light;
+    let light = normalize(uniforms.light_dir_view);
+    let view_dir = normalize(-in.view_position);
+    let half = normalize(light + view_dir);
     let diffuse = max(dot(normal, light), 0.0);
     let specular = pow(max(dot(normal, half), 0.0), 32.0);
 
