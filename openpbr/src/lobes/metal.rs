@@ -133,4 +133,16 @@ impl Lobe for Metal {
 
         density
     }
+
+    /// Deterministic Fresnel-based approximation, see the equivalent override on
+    /// [`SpecularReflection`](super::specular_reflection::SpecularReflection) for why this avoids
+    /// noisy lobe-selection probabilities.
+    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+        if !wo.is_in_upper_hemisphere() {
+            return Vec3::ZERO;
+        }
+
+        let (f0, tint) = self.f0_tint();
+        fresnel_metal(wo.cos_theta().abs(), f0, tint)
+    }
 }

@@ -12,3 +12,4 @@ obj-rs = "0.7.4"
 glam.workspace = true
 rand.workspace = true
 openpbr = { workspace = true, features = ["rand"] }
+openpbr-oracle = { path = "../openpbr-oracle" }

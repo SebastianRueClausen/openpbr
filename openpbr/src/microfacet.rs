@@ -49,15 +49,9 @@ impl Microfacet {
         1.0 / (1.0 + self.lambda(wi))
     }
 
-    #[allow(dead_code)]
-    pub fn density(&self, wi: Vec3, microfacet_normal: Vec3) -> f32 {
-        self.masking(wi) * wi.dot(microfacet_normal).abs() * self.distribution(microfacet_normal)
-            / wi.cos_theta().abs().max(DENOM_TOLERANCE)
-    }
-
     pub fn sample(&self, wo: Vec3, random: Vec2) -> Vec3 {
         let mut wi = Vec3::new(wo.x * self.alpha.x, wo.y * self.alpha.y, wo.z).normalize();
-        if wi.cos_theta() < 0.0 {
+        if !wi.is_in_upper_hemisphere() {
             wi = -wi;
         }
         let tangent = if wi.cos_theta() < 0.99999 {

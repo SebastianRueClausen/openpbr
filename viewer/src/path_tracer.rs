@@ -3,7 +3,7 @@ use crate::{bvh::Ray, Progress};
 use std::sync::Arc;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
-use openpbr::{math::SurfaceBasis, Bsdf, Material};
+use openpbr::{lobes::LobeType, math::SurfaceBasis, Bsdf, Material};
 use rand::RngExt;
 
 pub struct DirectionalLight {
@@ -13,12 +13,19 @@ pub struct DirectionalLight {
     pub radiance: Vec3,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Implementation {
+    OpenPBR,
+    Oracle,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub width: usize,
     pub height: usize,
     pub samples: usize,
     pub bounces: usize,
+    pub implementation: Implementation,
 }
 
 pub struct Camera {
@@ -66,11 +73,44 @@ fn camera_ray(ndc: Vec2, camera: &Camera, constants: &Constants) -> Ray {
     }
 }
 
+fn material_to_oracle_inputs(m: &Material) -> openpbr_oracle::ResolvedInputs {
+    let defaults = openpbr_oracle::ResolvedInputs::default();
+    let spec_angle = m.specular_rotation * std::f32::consts::TAU;
+    let coat_angle = m.coat_rotation * std::f32::consts::TAU;
+    openpbr_oracle::ResolvedInputs {
+        base_weight: m.base_weight,
+        base_color: m.base_color.to_array(),
+        base_diffuse_roughness: m.base_diffuse_roughness,
+        base_metalness: m.base_metalness,
+        specular_weight: m.specular_weight,
+        specular_color: m.specular_color.to_array(),
+        specular_roughness: m.specular_roughness,
+        specular_roughness_anisotropy: m.specular_roughness_anisotropy,
+        specular_ior: m.specular_ior,
+        specular_anisotropy_rotation_cos_sin: [spec_angle.cos(), spec_angle.sin()],
+        coat_weight: m.coat_weight,
+        coat_color: m.coat_color.to_array(),
+        coat_roughness: m.coat_roughness,
+        coat_roughness_anisotropy: m.coat_roughness_anisotropy,
+        coat_ior: m.coat_ior,
+        coat_darkening: m.coat_darkening,
+        coat_anisotropy_rotation_cos_sin: [coat_angle.cos(), coat_angle.sin()],
+        fuzz_weight: m.fuzz_weight,
+        fuzz_color: m.fuzz_color.to_array(),
+        fuzz_roughness: m.fuzz_roughness,
+        transmission_weight: m.transmission_weight,
+        transmission_color: m.transmission_color.to_array(),
+        transmission_depth: m.transmission_depth,
+        ..defaults
+    }
+}
+
 fn next_bounce(
     path_state: &mut PathState,
     model: &Model,
     material: &Material,
     light: &DirectionalLight,
+    implementation: Implementation,
     rng: &mut impl rand::Rng,
 ) -> bool {
     let Some(hit) = model.bvh.hit(&path_state.ray) else {
@@ -102,35 +142,82 @@ fn next_bounce(
     let basis = SurfaceBasis::any_with_normal(normal);
     let wo = basis.inverse_transform(-path_state.ray.direction);
 
-    let bsdf = Bsdf::new(material, wo, rng);
+    match implementation {
+        Implementation::OpenPBR => {
+            let bsdf = Bsdf::new(material, wo, rng);
 
-    /*
-    let wi_light = basis.inverse_transform(light.direction);
-    if wi_light.z > 0.0 {
-        let shadow_ray = Ray {
-            origin: position + normal * 1e-4,
-            direction: light.direction,
-        };
-        if model.bvh.hit(&shadow_ray).is_none() {
-            let (direct, _) = bsdf.eval(wo, wi_light);
-            let nee = direct.total() * wi_light.z * light.radiance;
-            path_state.accumulated += path_state.throughput * nee;
+            /*
+            let wi_light = basis.inverse_transform(light.direction);
+            if wi_light.z > 0.0 {
+                let shadow_ray = Ray {
+                    origin: position + normal * 1e-4,
+                    direction: light.direction,
+                };
+                if model.bvh.hit(&shadow_ray).is_none() {
+                    let (direct, _) = bsdf.eval(wo, wi_light);
+                    let nee = direct.total() * wi_light.z * light.radiance;
+                    path_state.accumulated += path_state.throughput * nee;
+                }
+            }
+            */
+
+            let Some(sample) = bsdf.sample(wo, rng) else {
+                return false;
+            };
+
+            let wi_world = basis.transform(sample.wi);
+            path_state.throughput *= sample.throughput.total() * sample.wi.z / sample.density;
+            path_state.ray = Ray {
+                origin: position + normal * 1e-4,
+                direction: wi_world,
+            };
+        }
+        Implementation::Oracle => {
+            let inputs = material_to_oracle_inputs(material);
+            let bsdf = openpbr_oracle::PreparedBsdf::prepare(
+                &inputs,
+                [1.0, 1.0, 1.0],
+                openpbr_oracle::RGB_WAVELENGTHS_NM,
+                openpbr_oracle::VACUUM_IOR,
+                wo.to_array(),
+            );
+
+            /*
+            let wi_light = basis.inverse_transform(light.direction);
+            if wi_light.z > 0.0 {
+                let shadow_ray = Ray {
+                    origin: position + normal * 1e-4,
+                    direction: light.direction,
+                };
+                if model.bvh.hit(&shadow_ray).is_none() {
+                    let direct = bsdf.eval(wi_light.into());
+                    let nee =
+                        (Vec3::from(direct.diffuse) + Vec3::from(direct.specular)) * light.radiance;
+                    path_state.accumulated += path_state.throughput * nee;
+                }
+            }
+            */
+
+            let sample = bsdf.sample([
+                rng.random::<f32>(),
+                rng.random::<f32>(),
+                rng.random::<f32>(),
+            ]);
+
+            if sample.pdf <= 0.0 || !sample.pdf.is_finite() {
+                return false;
+            }
+
+            let wi = Vec3::from(sample.light_direction);
+            let wi_world = basis.transform(wi);
+            let weight = Vec3::from(sample.weight.diffuse) + Vec3::from(sample.weight.specular);
+            path_state.throughput *= weight / sample.pdf;
+            path_state.ray = Ray {
+                origin: position + normal * 1e-4,
+                direction: wi_world,
+            };
         }
     }
-    */
-
-    let Some(sample) = bsdf.sample(wo, rng) else {
-        return false;
-    };
-
-    let wi_world = basis.transform(sample.wi);
-
-    path_state.throughput *=
-        (sample.throughput.diffuse + sample.throughput.specular) / sample.density;
-    path_state.ray = Ray {
-        origin: position + normal * 1e-4,
-        direction: wi_world,
-    };
 
     true
 }
@@ -157,7 +244,14 @@ fn integrate_pixel(
         };
 
         for _ in 0..config.bounces {
-            if !next_bounce(&mut path_state, model, material, light, rng) {
+            if !next_bounce(
+                &mut path_state,
+                model,
+                material,
+                light,
+                config.implementation,
+                rng,
+            ) {
                 break;
             }
         }

@@ -103,7 +103,7 @@ impl From<&Material> for SpecularReflection {
             specular_ior_ratio(m.specular_ior, m.coat_ior, m.coat_weight, m.specular_weight);
         Self {
             ior_ratio,
-            outer_ior: m.coat_ior,
+            outer_ior: 1.0 + m.coat_weight * (m.coat_ior - 1.0),
             fresnel_ior: m.specular_ior + m.coat_weight * (ior_ratio - m.specular_ior),
             specular_color: m.specular_color,
             roughness: m.specular_roughness,
@@ -165,7 +165,7 @@ impl Lobe for SpecularReflection {
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wo = rotation.rotate(wo);
 
-        let microfacet_normal = if wo.cos_theta() > 0.0 {
+        let microfacet_normal = if wo.is_in_upper_hemisphere() {
             microfacet.sample(wo, random.truncate())
         } else {
             microfacet
@@ -220,5 +220,31 @@ impl Lobe for SpecularReflection {
         );
 
         density
+    }
+
+    /// Deterministic approximation of the directional albedo, using the smooth-surface Fresnel
+    /// reflectance (i.e. ignoring the roughness-dependent spread of the microfacet lobe).
+    ///
+    /// This is only used to weight lobe-selection probabilities in [`Bsdf`], not for shading, so
+    /// the approximation doesn't need to be exact. What matters is that it's a deterministic
+    /// function of `wo`: estimating it by Monte Carlo sampling the lobe (as the default
+    /// `Lobe::estimate_directional_albedo` does) makes the lobe-selection probability itself a
+    /// noisy random variable, which can push the combined sampling density used for the
+    /// throughput estimator arbitrarily close to zero and produce fireflies.
+    ///
+    /// [`Bsdf`]: super::bsdf::Bsdf
+    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+        if !self.wo_is_valid(wo) {
+            return Vec3::ZERO;
+        }
+
+        let cos_theta = wo.cos_theta().abs();
+        let fresnel = if wo.is_in_upper_hemisphere() {
+            specular_fresnel(self.outer_ior, self.fresnel_ior, cos_theta)
+        } else {
+            Vec3::splat(fresnel_dielectric(1.0 / self.ior_ratio, cos_theta))
+        };
+
+        self.specular_color * fresnel
     }
 }

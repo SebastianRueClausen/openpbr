@@ -69,8 +69,8 @@ impl Lobe for Diffuse {
         }
 
         Throughput::from_diffuse(energy_compensated_oren_nayar(
-            self.weight * self.color,
-            PI / 2.0 * self.roughness,
+            self.color * self.weight,
+            self.roughness,
             wi,
             wo,
         ))

@@ -194,4 +194,15 @@ impl Lobe for SpecularTransmission {
 
         density
     }
+
+    /// Deterministic Fresnel-based approximation, see the equivalent override on
+    /// [`SpecularReflection`](super::specular_reflection::SpecularReflection) for why this avoids
+    /// noisy lobe-selection probabilities.
+    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+        let ior = self.ior(wo);
+        let cos_theta = wo.cos_theta().abs();
+        let transmittance = (1.0 - fresnel_dielectric(1.0 / ior, cos_theta)).clamp(0.0, 1.0);
+
+        tint(self.transmission_color, self.transmission_depth) * transmittance
+    }
 }

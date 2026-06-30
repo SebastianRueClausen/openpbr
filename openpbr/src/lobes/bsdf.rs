@@ -63,6 +63,23 @@ impl Bsdf {
         }
     }
 
+    pub fn lobe(&self, lobe: LobeType) -> &dyn Lobe {
+        match lobe {
+            LobeType::Fuzz => &self.fuzz,
+            LobeType::Coat => &self.coat,
+            LobeType::Metal => &self.metal,
+            LobeType::SpecularReflection => &self.spec_refl,
+            LobeType::SpecularTransmission => &self.spec_trans,
+            LobeType::Diffuse => &self.diffuse,
+        }
+    }
+
+    pub fn eval_lobe(&self, wo: Vec3, wi: Vec3, lobe: LobeType) -> (Throughput, f32) {
+        let throughput = self.lobe(lobe).eval(wo, wi);
+        let density = self.lobe(lobe).density(wo, wi);
+        (throughput, density)
+    }
+
     pub fn eval(&self, wo: Vec3, wi: Vec3) -> (Throughput, f32) {
         let (densities, throughput) = self.eval_lobes(wo, wi, None);
         let density = total_density(&self.probs, &densities);
@@ -72,22 +89,17 @@ impl Bsdf {
     /// Sample a lobe proportional to its weight, then evaluate all other lobes.
     pub fn sample<S: Sampler>(&self, wo: Vec3, rng: &mut S) -> Option<Sample> {
         let random_lobe = rng.next_f32();
-        let random_sample = rng.next_vec3();
-
         let mut cumulative = 0.0f32;
 
         for lobe in &LobeType::ALL {
             cumulative += self.probs[*lobe];
             if random_lobe < cumulative {
-                let Some(Sample {
+                let Sample {
                     wi,
                     density,
                     throughput: lobe_throughput,
                     ..
-                }) = self.sample_lobe(*lobe, wo, random_sample)
-                else {
-                    continue;
-                };
+                } = self.sample_lobe(*lobe, wo, rng)?;
 
                 let (mut densities, throughput) = self.eval_lobes(wo, wi, Some(*lobe));
                 densities[*lobe] = density;
@@ -109,7 +121,7 @@ impl Bsdf {
     }
 
     fn eval_lobes(&self, wo: Vec3, wi: Vec3, skip: Option<LobeType>) -> (PerLobe<f32>, Throughput) {
-        let mut throughput = Throughput::ONE;
+        let mut throughput = Throughput::ZERO;
 
         macro_rules! eval {
             ($i:expr, $lobe:expr) => {
@@ -136,7 +148,13 @@ impl Bsdf {
         (densities, throughput)
     }
 
-    fn sample_lobe(&self, lobe: LobeType, wo: Vec3, random: Vec3) -> Option<Sample> {
+    pub fn sample_lobe<S: Sampler>(
+        &self,
+        lobe: LobeType,
+        wo: Vec3,
+        random: &mut S,
+    ) -> Option<Sample> {
+        let random = random.next_vec3();
         match lobe {
             LobeType::Fuzz => self.fuzz.sample(random, wo),
             LobeType::Coat => self.coat.sample(random, wo),
@@ -177,27 +195,27 @@ fn compute_weights<S: Sampler>(
             Vec3::ZERO
         },
         if material.coat_weight > 0.0 {
-            coat.estimate_directional_albedo(wo, &[rng.next_vec3()])
+            coat.estimate_directional_albedo(wo, &[])
         } else {
             Vec3::ZERO
         },
         if material.base_metalness > 0.0 {
-            metal.estimate_directional_albedo(wo, &[rng.next_vec3()])
+            metal.estimate_directional_albedo(wo, &[])
         } else {
             Vec3::ZERO
         },
         if !fully_metallic {
-            spec_refl.estimate_directional_albedo(wo, &[rng.next_vec3()])
+            spec_refl.estimate_directional_albedo(wo, &[])
         } else {
             Vec3::ZERO
         },
         if !fully_metallic && material.transmission_weight > 0.0 {
-            spec_trans.estimate_directional_albedo(wo, &[rng.next_vec3()])
+            spec_trans.estimate_directional_albedo(wo, &[])
         } else {
             Vec3::ZERO
         },
         if !fully_metallic && !fully_transmissive {
-            diffuse.estimate_directional_albedo(wo, &[rng.next_vec3()])
+            diffuse.estimate_directional_albedo(wo, &[])
         } else {
             Vec3::ZERO
         },
@@ -264,12 +282,13 @@ fn compute_weights<S: Sampler>(
     weights[LobeType::Metal] = base_weight * material.base_metalness;
 
     let dielectric_base_weight = base_weight * (1.0 - material.base_metalness);
-    weights[LobeType::SpecularReflection] = dielectric_base_weight;
+    weights[LobeType::SpecularReflection] =
+        dielectric_base_weight * material.specular_color * material.specular_weight;
     weights[LobeType::SpecularTransmission] = dielectric_base_weight * material.transmission_weight;
 
-    let opaque_dielectric = dielectric_base_weight * (1.0 - material.transmission_weight);
-    weights[LobeType::Diffuse] =
-        opaque_dielectric * (Vec3::ONE - albedos[LobeType::SpecularReflection]);
+    weights[LobeType::Diffuse] = (dielectric_base_weight * (1.0 - material.transmission_weight))
+        * material.base_weight
+        * (Vec3::ONE - albedos[LobeType::SpecularReflection]);
 
     // Normalize weights into sampling probabilities.
     let mut probs = PerLobe::from_fn(|i| (weights[i] * albedos[i]).length());

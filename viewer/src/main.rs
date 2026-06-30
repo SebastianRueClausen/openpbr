@@ -354,6 +354,7 @@ impl Viewer {
             height: 512,
             samples: 16,
             bounces: 4,
+            implementation: path_tracer::Implementation::OpenPBR,
         };
 
         Self {
@@ -676,6 +677,19 @@ impl eframe::App for Viewer {
                     ui.add(egui::Slider::new(&mut c.height, 64..=2048).text("Height"));
                     ui.add(egui::Slider::new(&mut c.samples, 1..=256).text("Samples"));
                     ui.add(egui::Slider::new(&mut c.bounces, 1..=16).text("Bounces"));
+                    ui.horizontal(|ui| {
+                        ui.label("Implementation:");
+                        ui.selectable_value(
+                            &mut c.implementation,
+                            path_tracer::Implementation::OpenPBR,
+                            "OpenPBR",
+                        );
+                        ui.selectable_value(
+                            &mut c.implementation,
+                            path_tracer::Implementation::Oracle,
+                            "Oracle",
+                        );
+                    });
                 });
 
                 ui.add_space(spacing);
@@ -757,6 +771,13 @@ impl eframe::App for Viewer {
                             ui.label(format!("Size: {}×{}", c.width, c.height));
                             ui.label(format!("Samples: {}", c.samples));
                             ui.label(format!("Bounces: {}", c.bounces));
+                            ui.label(format!(
+                                "Implementation: {}",
+                                match c.implementation {
+                                    path_tracer::Implementation::OpenPBR => "OpenPBR",
+                                    path_tracer::Implementation::Oracle => "Oracle",
+                                }
+                            ));
                             ui.separator();
                             ui.heading("Material");
                             show_material_info(ui, &render.material);
