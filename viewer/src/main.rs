@@ -481,6 +481,120 @@ fn tonemap_to_texture(
     )
 }
 
+fn show_pixel_inspector(
+    ui: &mut egui::Ui,
+    pointer: egui::Pos2,
+    image_rect: egui::Rect,
+    image_size: egui::Vec2,
+    col: usize,
+    row: usize,
+    pixel: Vec3,
+) {
+    let painter = ui.painter();
+
+    // Outline the exact pixel being sampled, snapped to the displayed grid.
+    let pixel_size = image_rect.size() / image_size;
+    let pixel_min = image_rect.min + egui::vec2(col as f32, row as f32) * pixel_size;
+    let pixel_rect = egui::Rect::from_min_size(pixel_min, pixel_size).expand(1.0);
+    painter.rect_stroke(
+        pixel_rect,
+        0.0,
+        egui::Stroke::new(1.5, egui::Color32::WHITE),
+        egui::StrokeKind::Outside,
+    );
+    painter.rect_stroke(
+        pixel_rect,
+        0.0,
+        egui::Stroke::new(1.0, egui::Color32::BLACK),
+        egui::StrokeKind::Inside,
+    );
+
+    let gamma = Vec3::new(
+        pixel.x.powf(1.0 / 2.2),
+        pixel.y.powf(1.0 / 2.2),
+        pixel.z.powf(1.0 / 2.2),
+    );
+    let srgb = egui::Color32::from_rgb(
+        (gamma.x.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (gamma.y.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (gamma.z.clamp(0.0, 1.0) * 255.0).round() as u8,
+    );
+
+    let swatch_size = 28.0;
+    let padding = 8.0;
+    let row_height = 16.0;
+    let font = egui::FontId::monospace(12.0);
+
+    let lines = [
+        format!("x {col}, y {row}"),
+        format!("hdr {:.3} {:.3} {:.3}", pixel.x, pixel.y, pixel.z),
+        format!("srgb #{:02x}{:02x}{:02x}", srgb.r(), srgb.g(), srgb.b()),
+    ];
+
+    let text_width = lines
+        .iter()
+        .map(|line| {
+            painter
+                .layout_no_wrap(line.clone(), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        })
+        .fold(0.0f32, f32::max);
+
+    let card_size = egui::vec2(
+        padding * 3.0 + swatch_size + text_width,
+        padding * 2.0 + swatch_size.max(lines.len() as f32 * row_height),
+    );
+
+    // Anchor near the pointer but flip to the opposite side of whichever
+    // screen edge it would otherwise overflow, so the card never covers the
+    // cursor or gets clipped.
+    let gap = 16.0;
+    let screen = ui.clip_rect();
+    let mut origin = pointer + egui::vec2(gap, gap);
+    if origin.x + card_size.x > screen.right() {
+        origin.x = pointer.x - gap - card_size.x;
+    }
+    if origin.y + card_size.y > screen.bottom() {
+        origin.y = pointer.y - gap - card_size.y;
+    }
+    let card_rect = egui::Rect::from_min_size(origin, card_size);
+
+    painter.rect_filled(card_rect, 6.0, egui::Color32::from_black_alpha(220));
+    painter.rect_stroke(
+        card_rect,
+        6.0,
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(60)),
+        egui::StrokeKind::Inside,
+    );
+
+    let swatch_rect = egui::Rect::from_min_size(
+        card_rect.min + egui::vec2(padding, (card_size.y - swatch_size) * 0.5),
+        egui::vec2(swatch_size, swatch_size),
+    );
+    painter.rect_filled(swatch_rect, 4.0, srgb);
+    painter.rect_stroke(
+        swatch_rect,
+        4.0,
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(80)),
+        egui::StrokeKind::Inside,
+    );
+
+    let text_origin = egui::pos2(
+        swatch_rect.right() + padding,
+        card_rect.min.y + (card_size.y - lines.len() as f32 * row_height) * 0.5,
+    );
+    for (i, line) in lines.iter().enumerate() {
+        painter.text(
+            text_origin + egui::vec2(0.0, i as f32 * row_height),
+            egui::Align2::LEFT_TOP,
+            line,
+            font.clone(),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
 fn show_material_info(ui: &mut egui::Ui, m: &openpbr::Material) {
     let color_label = |ui: &mut egui::Ui, label: &str, c: Vec3| {
         ui.horizontal(|ui| {
@@ -792,7 +906,7 @@ impl eframe::App for Viewer {
                             });
                         }
                     }
-                    RenderContent::Done { image, .. } => {
+                    RenderContent::Done { image, raw } => {
                         if let Some(texture) = image {
                             let available = ui.available_size();
                             let tex_size = texture.size_vec2();
@@ -801,6 +915,7 @@ impl eframe::App for Viewer {
                             let (rect, _) = ui.allocate_exact_size(available, egui::Sense::hover());
                             let image_rect =
                                 egui::Rect::from_center_size(rect.center(), display_size);
+
                             ui.painter().image(
                                 texture.id(),
                                 image_rect,
@@ -810,6 +925,30 @@ impl eframe::App for Viewer {
                                 ),
                                 egui::Color32::WHITE,
                             );
+
+                            if let Some(pointer) = ui.pointer_interact_pos() {
+                                if image_rect.contains(pointer) {
+                                    let width = self.renders[index].config.width;
+                                    let height = self.renders[index].config.height;
+
+                                    let position = (pointer - image_rect.min) / image_rect.size();
+                                    let col = ((width as f32 * position.x) as usize).min(width - 1);
+                                    let row =
+                                        ((height as f32 * position.y) as usize).min(height - 1);
+
+                                    if let Some(pixel) = raw.get(row * width + col) {
+                                        show_pixel_inspector(
+                                            ui,
+                                            pointer,
+                                            image_rect,
+                                            egui::vec2(width as f32, height as f32),
+                                            col,
+                                            row,
+                                            *pixel,
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }

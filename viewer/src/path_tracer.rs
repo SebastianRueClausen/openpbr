@@ -211,6 +211,7 @@ fn next_bounce(
             let wi = Vec3::from(sample.light_direction);
             let wi_world = basis.transform(wi);
             let weight = Vec3::from(sample.weight.diffuse) + Vec3::from(sample.weight.specular);
+            path_state.throughput *= weight * wi.z.abs() / sample.pdf;
             path_state.ray = Ray {
                 origin: position + wi_world.dot(normal).signum() * normal * 1e-4,
                 direction: wi_world,

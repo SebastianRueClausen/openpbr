@@ -16,9 +16,9 @@ use super::{Lobe, LobeType, Sample, Throughput};
 fn fresnel_metal(cos_theta: f32, f0: Vec3, tint: Vec3) -> Vec3 {
     const MU_BAR: f32 = 1.0 / 7.0;
     let denom = MU_BAR * (1.0 - MU_BAR).powi(6);
-    let f_at_mu = schlick(f0, MU_BAR);
-    schlick(f0, cos_theta)
-        - cos_theta * (1.0 - cos_theta).powi(6) * (Vec3::ONE - tint) * f_at_mu / denom
+    let fresnel = schlick(f0, cos_theta)
+        - cos_theta * (1.0 - cos_theta).powi(6) * (Vec3::ONE - tint) * schlick(f0, MU_BAR) / denom;
+    fresnel.clamp(Vec3::ZERO, Vec3::ONE)
 }
 
 fn brdf_and_density(
