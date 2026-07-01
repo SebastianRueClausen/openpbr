@@ -222,17 +222,6 @@ impl Lobe for SpecularReflection {
         density
     }
 
-    /// Deterministic approximation of the directional albedo, using the smooth-surface Fresnel
-    /// reflectance (i.e. ignoring the roughness-dependent spread of the microfacet lobe).
-    ///
-    /// This is only used to weight lobe-selection probabilities in [`Bsdf`], not for shading, so
-    /// the approximation doesn't need to be exact. What matters is that it's a deterministic
-    /// function of `wo`: estimating it by Monte Carlo sampling the lobe (as the default
-    /// `Lobe::estimate_directional_albedo` does) makes the lobe-selection probability itself a
-    /// noisy random variable, which can push the combined sampling density used for the
-    /// throughput estimator arbitrarily close to zero and produce fireflies.
-    ///
-    /// [`Bsdf`]: super::bsdf::Bsdf
     fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
         if !self.wo_is_valid(wo) {
             return Vec3::ZERO;

@@ -166,9 +166,9 @@ fn next_bounce(
             };
 
             let wi_world = basis.transform(sample.wi);
-            path_state.throughput *= sample.throughput.total() * sample.wi.z / sample.density;
+            path_state.throughput *= sample.throughput.total() * sample.wi.z.abs() / sample.density;
             path_state.ray = Ray {
-                origin: position + normal * 1e-4,
+                origin: position + wi_world.dot(normal).signum() * normal * 1e-4,
                 direction: wi_world,
             };
         }
@@ -211,9 +211,8 @@ fn next_bounce(
             let wi = Vec3::from(sample.light_direction);
             let wi_world = basis.transform(wi);
             let weight = Vec3::from(sample.weight.diffuse) + Vec3::from(sample.weight.specular);
-            path_state.throughput *= weight / sample.pdf;
             path_state.ray = Ray {
-                origin: position + normal * 1e-4,
+                origin: position + wi_world.dot(normal).signum() * normal * 1e-4,
                 direction: wi_world,
             };
         }

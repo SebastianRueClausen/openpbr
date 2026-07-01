@@ -18,15 +18,29 @@ fn tint(transmission_color: Vec3, transmission_depth: f32) -> Vec3 {
     }
 }
 
-// Recover the microfacet normal. Returns `None` if the normal could not have been sampled.
+// Recover the generalized half-vector, i.e. the microfacet normal that would have refracted `wo`
+// into `wi`. Returns `None` if `wi` could not have come from a valid refraction of `wo` through
+// any microfacet.
 fn microfacet_normal(wo: Vec3, wi: Vec3, ior: f32) -> Option<Vec3> {
-    let normal = (-wi - ior * wo).try_normalize()?;
-    let normal = if normal.dot(wo) > 0.0 {
-        normal
+    if wo.cos_theta() == 0.0 || wi.cos_theta() == 0.0 {
+        return None;
+    }
+
+    let etap = 1.0 / ior;
+    let normal = (wi * etap + wo).try_normalize()?;
+    let normal = if normal.cos_theta() < 0.0 {
+        -normal
     } else {
-        (ior > 1.0).then_some(-normal)?
+        normal
     };
-    normal.is_in_same_hemisphere(&wo).then_some(normal)
+
+    // Discard backfacing microfacets. A half-vector that isn't on the same side as both `wo`
+    // and `wi` could not actually have produced this refraction.
+    if normal.dot(wi) * wi.cos_theta() < 0.0 || normal.dot(wo) * wo.cos_theta() < 0.0 {
+        return None;
+    }
+
+    Some(normal)
 }
 
 fn bsdf_and_density(
@@ -39,29 +53,27 @@ fn bsdf_and_density(
     transmission_depth: f32,
 ) -> (Vec3, f32) {
     let wo_dot_normal = wo.dot(microfacet_normal);
-    let d = microfacet.distribution(microfacet_normal);
-    let microfacet_density = d * microfacet.masking(wo) * wo_dot_normal.max(0.0)
+    let wi_dot_normal = wi.dot(microfacet_normal);
+
+    let distribution = microfacet.distribution(microfacet_normal);
+    let microfacet_density = distribution * microfacet.masking(wo) * wo_dot_normal.max(0.0)
         / wo.cos_theta().abs().max(DENOM_TOLERANCE);
 
-    let cos_tangent_squared = 1.0 - ior.powi(2) * (1.0 - wo_dot_normal.max(0.0).powi(2)).max(0.0);
-    if cos_tangent_squared < 0.0 {
-        // Total internal reflection.
-        return (Vec3::ZERO, 0.0);
-    }
-
-    let cos_tangent = cos_tangent_squared.sqrt();
-
-    let refraction_denom = (ior * wo_dot_normal.max(0.0) - cos_tangent)
+    let denom = (wi_dot_normal + wo_dot_normal * ior)
         .powi(2)
         .max(DENOM_TOLERANCE);
+    let density = microfacet_density * wi_dot_normal.abs() / denom;
 
-    // See Walter et al. (2007) Eq. 17.
-    let density = microfacet_density * cos_tangent / refraction_denom;
+    let fresnel = fresnel_dielectric(1.0 / ior, wo_dot_normal.abs());
+    let transmission = (1.0 - fresnel).clamp(0.0, 1.0);
     let visibility = microfacet.visibility(wo, wi);
-    let transmission =
-        (1.0 - fresnel_dielectric(1.0 / ior, wo_dot_normal.max(0.0))).clamp(0.0, 1.0);
-    let btdf = transmission * wo_dot_normal.max(0.0) * cos_tangent * visibility * d
-        / (wi.cos_theta().abs() * wo.cos_theta().abs() * refraction_denom).max(DENOM_TOLERANCE);
+
+    let cos_product = (wi.cos_theta() * wo.cos_theta()).abs().max(DENOM_TOLERANCE);
+    let btdf = transmission
+        * distribution
+        * visibility
+        * (wi_dot_normal * wo_dot_normal / (cos_product * denom)).abs();
+
     (btdf * tint(transmission_color, transmission_depth), density)
 }
 
@@ -195,9 +207,6 @@ impl Lobe for SpecularTransmission {
         density
     }
 
-    /// Deterministic Fresnel-based approximation, see the equivalent override on
-    /// [`SpecularReflection`](super::specular_reflection::SpecularReflection) for why this avoids
-    /// noisy lobe-selection probabilities.
     fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
         let ior = self.ior(wo);
         let cos_theta = wo.cos_theta().abs();

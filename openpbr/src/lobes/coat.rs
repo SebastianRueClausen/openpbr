@@ -130,9 +130,6 @@ impl Lobe for Coat {
         density
     }
 
-    /// Deterministic Fresnel-based approximation, see the equivalent override on
-    /// [`SpecularReflection`](super::specular_reflection::SpecularReflection) for why this avoids
-    /// noisy lobe-selection probabilities.
     fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
         if !self.wo_is_valid(wo) {
             return Vec3::ZERO;
