@@ -1,7 +1,11 @@
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 pub trait Sampler {
     fn next_f32(&mut self) -> f32;
+
+    fn next_vec2(&mut self) -> Vec2 {
+        Vec2::new(self.next_f32(), self.next_f32())
+    }
 
     fn next_vec3(&mut self) -> Vec3 {
         Vec3::new(self.next_f32(), self.next_f32(), self.next_f32())

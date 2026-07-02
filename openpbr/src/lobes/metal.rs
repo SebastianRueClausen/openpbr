@@ -4,6 +4,7 @@ use crate::{
     material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::{self, Microfacet},
+    Sampler,
 };
 use glam::Vec3;
 use std::f32::consts::PI;
@@ -66,10 +67,6 @@ impl Metal {
 }
 
 impl Lobe for Metal {
-    fn wo_is_valid(&self, wo: Vec3) -> bool {
-        wo.is_in_upper_hemisphere()
-    }
-
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if !wo.is_in_upper_hemisphere() || !wi.is_in_upper_hemisphere() {
             return Throughput::ZERO;
@@ -89,7 +86,7 @@ impl Lobe for Metal {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+    fn sample<S: Sampler>(&self, rng: &mut S, wo: Vec3) -> Option<Sample> {
         if !wo.is_in_upper_hemisphere() {
             return None;
         }
@@ -98,7 +95,7 @@ impl Lobe for Metal {
 
         let rotation = LocalRotation::new(2.0 * PI * self.rotation);
         let wo = rotation.rotate(wo);
-        let microfacet_normal = microfacet.sample(wo, random.truncate());
+        let microfacet_normal = microfacet.sample(wo, rng.next_vec2());
         let wi = -wo.reflect(microfacet_normal);
 
         if !wo.is_in_same_hemisphere(&wi) {
@@ -134,7 +131,7 @@ impl Lobe for Metal {
         density
     }
 
-    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
         if !wo.is_in_upper_hemisphere() {
             return Vec3::ZERO;
         }

@@ -4,6 +4,7 @@ use crate::{
     material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::{self, Microfacet},
+    Sampler,
 };
 use glam::Vec3;
 use std::f32::consts::PI;
@@ -47,13 +48,13 @@ impl Coat {
             1.0 / self.ior
         }
     }
-}
 
-impl Lobe for Coat {
     fn wo_is_valid(&self, wo: Vec3) -> bool {
         (self.ior(wo) - 1.0).abs() >= IOR_EPSILON
     }
+}
 
+impl Lobe for Coat {
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if !wo.is_in_same_hemisphere(&wi) {
             return Throughput::ZERO;
@@ -78,7 +79,7 @@ impl Lobe for Coat {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+    fn sample<S: Sampler>(&self, rng: &mut S, wo: Vec3) -> Option<Sample> {
         if !self.wo_is_valid(wo) {
             return None;
         }
@@ -92,7 +93,7 @@ impl Lobe for Coat {
             return None;
         }
 
-        let microfacet_normal = microfacet.sample(wo, random.truncate());
+        let microfacet_normal = microfacet.sample(wo, rng.next_vec2());
 
         let wi = -wo.reflect(microfacet_normal);
         if !wo.is_in_same_hemisphere(&wi) {
@@ -130,7 +131,7 @@ impl Lobe for Coat {
         density
     }
 
-    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
         if !self.wo_is_valid(wo) {
             return Vec3::ZERO;
         }

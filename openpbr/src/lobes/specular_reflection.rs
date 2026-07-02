@@ -4,6 +4,7 @@ use crate::{
     material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::{self, Microfacet},
+    Sampler,
 };
 use glam::Vec3;
 use std::f32::consts::PI;
@@ -113,11 +114,13 @@ impl From<&Material> for SpecularReflection {
     }
 }
 
-impl Lobe for SpecularReflection {
+impl SpecularReflection {
     fn wo_is_valid(&self, _: Vec3) -> bool {
         (self.ior_ratio - 1.0).abs() >= IOR_EPSILON
     }
+}
 
+impl Lobe for SpecularReflection {
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if !wo.is_in_same_hemisphere(&wi) {
             return Throughput::ZERO;
@@ -155,7 +158,7 @@ impl Lobe for SpecularReflection {
         Throughput::from_specular(brdf)
     }
 
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+    fn sample<S: Sampler>(&self, rng: &mut S, wo: Vec3) -> Option<Sample> {
         if (self.ior_ratio - 1.0).abs() < IOR_EPSILON {
             return None;
         }
@@ -166,10 +169,10 @@ impl Lobe for SpecularReflection {
         let wo = rotation.rotate(wo);
 
         let microfacet_normal = if wo.is_in_upper_hemisphere() {
-            microfacet.sample(wo, random.truncate())
+            microfacet.sample(wo, rng.next_vec2())
         } else {
             microfacet
-                .sample(wo.flip_hemisphere(), random.truncate())
+                .sample(wo.flip_hemisphere(), rng.next_vec2())
                 .flip_hemisphere()
         };
 
@@ -222,7 +225,7 @@ impl Lobe for SpecularReflection {
         density
     }
 
-    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
         if !self.wo_is_valid(wo) {
             return Vec3::ZERO;
         }

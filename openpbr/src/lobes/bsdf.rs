@@ -31,7 +31,7 @@ pub struct Bsdf {
 impl Bsdf {
     /// Build lobes and compute sampling weights from `material` for incident direction `wo`.
     /// One sample per active lobe is drawn from `rng` for directional-albedo estimation.
-    pub fn new<S: Sampler>(material: &Material, wo: Vec3, rng: &mut S) -> Self {
+    pub fn new(material: &Material, wo: Vec3) -> Self {
         let fuzz = Fuzz::from(material);
         let coat = Coat::from(material);
         let metal = Metal::from(material);
@@ -42,7 +42,6 @@ impl Bsdf {
         let (weights, probs) = compute_weights(
             material,
             wo,
-            rng,
             &fuzz,
             &coat,
             &metal,
@@ -63,27 +62,9 @@ impl Bsdf {
         }
     }
 
-    pub fn lobe(&self, lobe: LobeType) -> &dyn Lobe {
-        match lobe {
-            LobeType::Fuzz => &self.fuzz,
-            LobeType::Coat => &self.coat,
-            LobeType::Metal => &self.metal,
-            LobeType::SpecularReflection => &self.spec_refl,
-            LobeType::SpecularTransmission => &self.spec_trans,
-            LobeType::Diffuse => &self.diffuse,
-        }
-    }
-
-    pub fn eval_lobe(&self, wo: Vec3, wi: Vec3, lobe: LobeType) -> (Throughput, f32) {
-        let throughput = self.lobe(lobe).eval(wo, wi);
-        let density = self.lobe(lobe).density(wo, wi);
-        (throughput, density)
-    }
-
-    pub fn eval(&self, wo: Vec3, wi: Vec3) -> (Throughput, f32) {
-        let (densities, throughput) = self.eval_lobes(wo, wi, None);
-        let density = total_density(&self.probs, &densities);
-        (throughput, density)
+    pub fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
+        let (_, throughput) = self.eval_lobes(wo, wi, None);
+        throughput
     }
 
     /// Sample a lobe proportional to its weight, then evaluate all other lobes.
@@ -110,7 +91,7 @@ impl Bsdf {
                         specular: throughput.specular
                             + self.weights[*lobe] * lobe_throughput.specular,
                     },
-                    density: total_density(&self.probs, &densities),
+                    density: per_lobe_weighted_sum(&self.probs, &densities),
                     lobe_type: *lobe,
                     wi,
                 });
@@ -154,7 +135,6 @@ impl Bsdf {
         wo: Vec3,
         random: &mut S,
     ) -> Option<Sample> {
-        let random = random.next_vec3();
         match lobe {
             LobeType::Fuzz => self.fuzz.sample(random, wo),
             LobeType::Coat => self.coat.sample(random, wo),
@@ -166,18 +146,91 @@ impl Bsdf {
     }
 }
 
-fn total_density(probs: &PerLobe<f32>, densities: &PerLobe<f32>) -> f32 {
-    probs
-        .values()
-        .zip(densities.values())
-        .map(|(p, d)| p * d)
-        .sum()
+impl Lobe for Bsdf {
+    fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
+        self.eval(wo, wi)
+    }
+
+    fn sample<S: Sampler>(&self, random: &mut S, wo: Vec3) -> Option<Sample> {
+        self.sample(wo, random)
+    }
+
+    fn density(&self, wo: Vec3, wi: Vec3) -> f32 {
+        let (densities, _) = self.eval_lobes(wo, wi, None);
+        per_lobe_weighted_sum(&self.probs, &densities)
+    }
+
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
+        let albedos = PerLobe::new([
+            self.fuzz.estimate_directional_albedo(wo),
+            self.coat.estimate_directional_albedo(wo),
+            self.metal.estimate_directional_albedo(wo),
+            self.spec_refl.estimate_directional_albedo(wo),
+            self.spec_trans.estimate_directional_albedo(wo),
+            self.diffuse.estimate_directional_albedo(wo),
+        ]);
+        albedos
+            .values()
+            .zip(self.weights.values())
+            .map(|(p, d)| p * d)
+            .sum()
+    }
 }
 
-fn compute_weights<S: Sampler>(
+fn per_lobe_weighted_sum(a: &PerLobe<f32>, b: &PerLobe<f32>) -> f32 {
+    a.values().zip(b.values()).map(|(p, d)| p * d).sum()
+}
+
+fn albedos(
     material: &Material,
     wo: Vec3,
-    rng: &mut S,
+    fuzz: &Fuzz,
+    coat: &Coat,
+    metal: &Metal,
+    spec_refl: &SpecularReflection,
+    spec_trans: &SpecularTransmission,
+    diffuse: &Diffuse,
+) -> PerLobe<Vec3> {
+    let fully_metallic = material.base_metalness == 1.0;
+    let fully_transmissive = material.transmission_weight == 1.0;
+
+    PerLobe::new([
+        if material.fuzz_weight > 0.0 {
+            fuzz.estimate_directional_albedo(wo)
+        } else {
+            Vec3::ZERO
+        },
+        if material.coat_weight > 0.0 {
+            coat.estimate_directional_albedo(wo)
+        } else {
+            Vec3::ZERO
+        },
+        if material.base_metalness > 0.0 {
+            metal.estimate_directional_albedo(wo)
+        } else {
+            Vec3::ZERO
+        },
+        if !fully_metallic {
+            spec_refl.estimate_directional_albedo(wo)
+        } else {
+            Vec3::ZERO
+        },
+        if !fully_metallic && material.transmission_weight > 0.0 {
+            spec_trans.estimate_directional_albedo(wo)
+        } else {
+            Vec3::ZERO
+        },
+        if !fully_metallic && !fully_transmissive {
+            diffuse.estimate_directional_albedo(wo)
+        } else {
+            Vec3::ZERO
+        },
+    ])
+}
+
+fn compute_weights(
+    material: &Material,
+    wo: Vec3,
     fuzz: &Fuzz,
     coat: &Coat,
     metal: &Metal,
@@ -185,41 +238,9 @@ fn compute_weights<S: Sampler>(
     spec_trans: &SpecularTransmission,
     diffuse: &Diffuse,
 ) -> (PerLobe<Vec3>, PerLobe<f32>) {
-    let fully_metallic = material.base_metalness == 1.0;
-    let fully_transmissive = material.transmission_weight == 1.0;
-
-    let albedos = PerLobe::new([
-        if material.fuzz_weight > 0.0 {
-            fuzz.estimate_directional_albedo(wo, &[rng.next_vec3()])
-        } else {
-            Vec3::ZERO
-        },
-        if material.coat_weight > 0.0 {
-            coat.estimate_directional_albedo(wo, &[])
-        } else {
-            Vec3::ZERO
-        },
-        if material.base_metalness > 0.0 {
-            metal.estimate_directional_albedo(wo, &[])
-        } else {
-            Vec3::ZERO
-        },
-        if !fully_metallic {
-            spec_refl.estimate_directional_albedo(wo, &[])
-        } else {
-            Vec3::ZERO
-        },
-        if !fully_metallic && material.transmission_weight > 0.0 {
-            spec_trans.estimate_directional_albedo(wo, &[])
-        } else {
-            Vec3::ZERO
-        },
-        if !fully_metallic && !fully_transmissive {
-            diffuse.estimate_directional_albedo(wo, &[])
-        } else {
-            Vec3::ZERO
-        },
-    ]);
+    let albedos = albedos(
+        material, wo, fuzz, coat, metal, spec_refl, spec_trans, diffuse,
+    );
 
     let mut weights: PerLobe<Vec3> = PerLobe::from_fn(|_| Vec3::ZERO);
 

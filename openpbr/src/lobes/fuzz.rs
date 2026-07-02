@@ -1,4 +1,4 @@
-use crate::{material::Material, math::SphericalCoordinates, sampling};
+use crate::{material::Material, math::SphericalCoordinates, sampling, Sampler};
 use glam::{Vec2, Vec3};
 use std::f32::consts::PI;
 
@@ -11,6 +11,7 @@ use super::{Lobe, LobeType, Sample, Throughput};
 /// by the paper "Practical Multiple-Scattering Sheen Using Linearly Transformed Cosines"
 /// by Zeltner, Burley, and Chiang (2022).
 pub struct Fuzz {
+    pub weight: f32,
     pub color: Vec3,
     pub roughness: f32,
 }
@@ -18,6 +19,7 @@ pub struct Fuzz {
 impl From<&Material> for Fuzz {
     fn from(m: &Material) -> Self {
         Self {
+            weight: m.fuzz_weight,
             color: m.fuzz_color,
             roughness: m.fuzz_roughness,
         }
@@ -34,10 +36,6 @@ fn phi(v: Vec3) -> f32 {
 }
 
 impl Lobe for Fuzz {
-    fn wo_is_valid(&self, wo: Vec3) -> bool {
-        wo.is_in_upper_hemisphere()
-    }
-
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if !wi.is_in_upper_hemisphere() || !wo.is_in_upper_hemisphere() {
             return Throughput::ZERO;
@@ -56,12 +54,12 @@ impl Lobe for Fuzz {
         Throughput::from_diffuse((f1 * f2).sqrt() * self.color)
     }
 
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+    fn sample<S: Sampler>(&self, rng: &mut S, wo: Vec3) -> Option<Sample> {
         if !wo.is_in_upper_hemisphere() {
             return None;
         }
 
-        let wi = sample_ltc(ltc_coeffs(wo, self.roughness), random.truncate())
+        let wi = sample_ltc(ltc_coeffs(wo, self.roughness), rng.next_vec2())
             .rotate_axis(Vec3::Z, phi(wo));
 
         if !wi.is_in_same_hemisphere(&wo) {
@@ -86,6 +84,14 @@ impl Lobe for Fuzz {
 
         let wi = wi.rotate_axis(Vec3::Z, -phi(wo));
         ltc(wi, ltc_coeffs(wo, self.roughness))
+    }
+
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
+        if !wo.is_in_upper_hemisphere() {
+            return Vec3::ZERO;
+        }
+
+        self.color * self.weight
     }
 }
 

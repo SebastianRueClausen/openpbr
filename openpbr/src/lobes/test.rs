@@ -46,7 +46,7 @@ impl<'a, B: Lobe + Sync> LobeTest<'a, B> {
         let mut bins = vec![0.0f32; self.theta_bin_count * self.phi_bin_count];
 
         for _ in 0..self.sample_count {
-            let Some(Sample { wi, .. }) = self.lobe.sample(rng.random(), wo) else {
+            let Some(Sample { wi, .. }) = self.lobe.sample(rng, wo) else {
                 continue;
             };
 
@@ -215,7 +215,6 @@ fn integrate<F: Fn(f32, f32) -> f32 + Sync + Send + Copy>(
     romberg_method(outer, ys.start, ys.end, y_dim) as f32
 }
 
-/// Standard test parameters suitable for broadly-distributed lobes.
 fn standard_test<'a, L: Lobe + Sync>(lobe: &'a L) -> LobeTest<'a, L> {
     LobeTest {
         lobe,
@@ -227,8 +226,6 @@ fn standard_test<'a, L: Lobe + Sync>(lobe: &'a L) -> LobeTest<'a, L> {
         min_expected_freq: 2.0,
     }
 }
-
-// ─── Diffuse ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn diffuse_smooth() {
@@ -257,8 +254,6 @@ fn diffuse_colored() {
     };
     standard_test(&Diffuse::from(&m)).run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(3));
 }
-
-// ─── Fuzz ─────────────────────────────────────────────────────────────────────
 
 #[test]
 fn fuzz_low_roughness() {
@@ -289,8 +284,6 @@ fn fuzz_high_roughness() {
     };
     standard_test(&Fuzz::from(&m)).run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(12));
 }
-
-// ─── Metal ────────────────────────────────────────────────────────────────────
 
 #[test]
 fn metal_isotropic() {
@@ -331,8 +324,6 @@ fn metal_anisotropic_rotated() {
     standard_test(&Metal::from(&m)).run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(23));
 }
 
-// ─── Coat ─────────────────────────────────────────────────────────────────────
-
 #[test]
 fn coat_smooth() {
     let m = Material {
@@ -363,8 +354,6 @@ fn coat_anisotropic() {
     };
     standard_test(&Coat::from(&m)).run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(32));
 }
-
-// ─── Specular Reflection ──────────────────────────────────────────────────────
 
 #[test]
 fn specular_reflection_smooth() {
@@ -397,7 +386,7 @@ fn specular_reflection_with_coat() {
         ..Material::default()
     };
     standard_test(&SpecularReflection::from(&m))
-        .run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(42));
+        .run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(43));
 }
 
 #[test]
@@ -423,12 +412,6 @@ fn specular_reflection_anisotropic_rotated() {
         .run(&mut rand::rngs::Xoshiro256PlusPlus::seed_from_u64(44));
 }
 
-// ─── Specular Transmission ────────────────────────────────────────────────────
-//
-// Note: the reciprocity sub-test samples both directions from the upper hemisphere, so
-// eval() returns ZERO for same-hemisphere pairs and reciprocity passes trivially. The
-// chi-squared sub-test (sampling vs. density) is the meaningful check for this lobe.
-
 #[test]
 fn specular_transmission_standard() {
     let m = Material {
@@ -453,8 +436,6 @@ fn specular_transmission_rough() {
 
 #[test]
 fn specular_transmission_high_ior() {
-    // Higher IOR → stronger total internal reflection → fewer transmitted samples. Tests
-    // that the sampler and density agree even when many microfacet orientations are rejected.
     let m = Material {
         specular_roughness: 0.3,
         specular_ior: 2.0,

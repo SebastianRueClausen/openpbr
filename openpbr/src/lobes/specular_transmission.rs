@@ -4,6 +4,7 @@ use crate::{
     material::Material,
     math::{LocalRotation, SphericalCoordinates},
     microfacet::Microfacet,
+    Sampler,
 };
 use glam::Vec3;
 use std::f32::consts::PI;
@@ -111,10 +112,6 @@ impl SpecularTransmission {
 }
 
 impl Lobe for SpecularTransmission {
-    fn wo_is_valid(&self, _: Vec3) -> bool {
-        true
-    }
-
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if wo.is_in_same_hemisphere(&wi) {
             return Throughput::ZERO;
@@ -144,7 +141,7 @@ impl Lobe for SpecularTransmission {
         Throughput::from_specular(btdf)
     }
 
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+    fn sample<S: Sampler>(&self, rng: &mut S, wo: Vec3) -> Option<Sample> {
         let ior = self.ior(wo);
 
         let microfacet = Microfacet::new(self.roughness, self.roughness_anisotropy);
@@ -152,10 +149,10 @@ impl Lobe for SpecularTransmission {
         let wo = rotation.rotate(wo);
 
         let microfacet_normal = if wo.is_in_upper_hemisphere() {
-            microfacet.sample(wo, random.truncate())
+            microfacet.sample(wo, rng.next_vec2())
         } else {
             microfacet
-                .sample(wo.flip_hemisphere(), random.truncate())
+                .sample(wo.flip_hemisphere(), rng.next_vec2())
                 .flip_hemisphere()
         };
 
@@ -207,11 +204,10 @@ impl Lobe for SpecularTransmission {
         density
     }
 
-    fn estimate_directional_albedo(&self, wo: Vec3, _: &[Vec3]) -> Vec3 {
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
         let ior = self.ior(wo);
         let cos_theta = wo.cos_theta().abs();
         let transmittance = (1.0 - fresnel_dielectric(1.0 / ior, cos_theta)).clamp(0.0, 1.0);
-
         tint(self.transmission_color, self.transmission_depth) * transmittance
     }
 }

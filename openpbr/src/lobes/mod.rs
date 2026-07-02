@@ -1,6 +1,7 @@
-use crate::{consts::DENSITY_EPSILON, math::SphericalCoordinates};
 use glam::Vec3;
 use std::ops::{Index, IndexMut};
+
+use crate::Sampler;
 
 pub mod bsdf;
 pub mod coat;
@@ -63,26 +64,9 @@ pub struct Sample {
 
 pub trait Lobe {
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput;
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample>;
+    fn sample<S: Sampler>(&self, random: &mut S, wo: Vec3) -> Option<Sample>;
     fn density(&self, wo: Vec3, wi: Vec3) -> f32;
-    fn wo_is_valid(&self, wo: Vec3) -> bool;
-
-    fn estimate_directional_albedo(&self, wo: Vec3, samples: &[Vec3]) -> Vec3 {
-        if !self.wo_is_valid(wo) {
-            return Vec3::ZERO;
-        }
-
-        let mut albedo = Vec3::ZERO;
-
-        for random in samples {
-            if let Some(sample) = self.sample(*random, wo) {
-                albedo += sample.throughput.total() * sample.wi.cos_theta().abs()
-                    / sample.density.max(DENSITY_EPSILON);
-            };
-        }
-
-        return albedo / samples.len() as f32;
-    }
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -3,9 +3,10 @@ use crate::{bvh::Ray, Progress};
 use std::sync::Arc;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
-use openpbr::{lobes::LobeType, math::SurfaceBasis, Bsdf, Material};
+use openpbr::{math::SurfaceBasis, Bsdf, Material};
 use rand::RngExt;
 
+#[allow(dead_code)]
 pub struct DirectionalLight {
     /// Normalized direction pointing *toward* the light in world space.
     pub direction: Vec3,
@@ -109,7 +110,7 @@ fn next_bounce(
     path_state: &mut PathState,
     model: &Model,
     material: &Material,
-    light: &DirectionalLight,
+    _light: &DirectionalLight,
     implementation: Implementation,
     rng: &mut impl rand::Rng,
 ) -> bool {
@@ -144,7 +145,7 @@ fn next_bounce(
 
     match implementation {
         Implementation::OpenPBR => {
-            let bsdf = Bsdf::new(material, wo, rng);
+            let bsdf = Bsdf::new(material, wo);
 
             /*
             let wi_light = basis.inverse_transform(light.direction);

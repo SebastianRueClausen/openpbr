@@ -2,6 +2,7 @@ use crate::{
     material::Material,
     math::SphericalCoordinates,
     sampling::{cosine_hemisphere_density, cosine_hemisphere_sample},
+    Sampler,
 };
 use glam::Vec3;
 use std::f32::consts::PI;
@@ -59,29 +60,25 @@ impl From<&Material> for Diffuse {
 }
 
 impl Lobe for Diffuse {
-    fn wo_is_valid(&self, wi: Vec3) -> bool {
-        wi.is_in_upper_hemisphere()
-    }
-
     fn eval(&self, wo: Vec3, wi: Vec3) -> Throughput {
         if !wi.is_in_upper_hemisphere() || !wo.is_in_upper_hemisphere() {
             return Throughput::ZERO;
         }
 
         Throughput::from_diffuse(energy_compensated_oren_nayar(
-            self.color * self.weight,
+            self.color,
             self.roughness,
             wi,
             wo,
         ))
     }
 
-    fn sample(&self, random: Vec3, wo: Vec3) -> Option<Sample> {
+    fn sample<S: Sampler>(&self, rng: &mut S, wo: Vec3) -> Option<Sample> {
         if !wo.is_in_upper_hemisphere() {
             return None;
         }
 
-        let wi = cosine_hemisphere_sample(random.truncate());
+        let wi = cosine_hemisphere_sample(rng.next_vec2());
         let throughput = self.eval(wo, wi);
         let density = self.density(wo, wi);
 
@@ -101,8 +98,8 @@ impl Lobe for Diffuse {
         cosine_hemisphere_density(wi.cos_theta())
     }
 
-    fn estimate_directional_albedo(&self, wi: Vec3, _: &[Vec3]) -> Vec3 {
-        if !wi.is_in_upper_hemisphere() {
+    fn estimate_directional_albedo(&self, wo: Vec3) -> Vec3 {
+        if !wo.is_in_upper_hemisphere() {
             return Vec3::ZERO;
         }
 
